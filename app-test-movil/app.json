@@ -55,6 +55,17 @@
     },
     "platforms": [
       "ios"
-    ]
+    ],
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "9f02ae78-31cf-4662-b774-e1e845fe53ba"
+      }
+    },
+    "owner": "albertoduque1006"
   }
 }
