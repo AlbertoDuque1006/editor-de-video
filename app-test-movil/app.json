@@ -1,0 +1,60 @@
+{
+  "expo": {
+    "name": "Editor Móvil",
+    "slug": "editor-movil",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.smartmarketing.editormovil",
+      "infoPlist": {
+        "NSSpeechRecognitionUsageDescription": "Para escribir los subtítulos de tus videos con lo que se dice en ellos.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
+      "expo-sharing",
+      "expo-image",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Para elegir los videos que vas a editar.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Para elegir los videos que vas a editar.",
+          "savePhotosPermission": "Para guardar en tus fotos el video que exportes."
+        }
+      ],
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": false,
+          "supportsPictureInPicture": false
+        }
+      ],
+      "expo-audio",
+      "expo-asset"
+    ],
+    "scheme": "editormovil",
+    "experiments": {
+      "typedRoutes": true
+    },
+    "platforms": [
+      "ios"
+    ]
+  }
+}

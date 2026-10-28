@@ -1,11 +1,16 @@
-# Genera los instaladores de Windows (.exe) y Mac (.dmg) en máquinas de GitHub.
+# App del computador (app-test-pc). Genera los instaladores de Windows (.exe) y Mac (.dmg) en máquinas de GitHub.
 # Se descargan desde la pestaña Actions > la última ejecución > Artifacts.
 name: Instaladores
 
 on:
   push:
     branches: [master]
+    paths: ['app-test-pc/**', '.github/workflows/instaladores.yml']
   workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: app-test-pc
 
 jobs:
   windows:
@@ -16,6 +21,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: app-test-pc/package-lock.json
       - run: npm ci
       - run: node --test "tests/*.test.ts"
       - run: npm run dist:win
@@ -24,7 +30,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: instalador-windows
-          path: dist/*.exe
+          path: app-test-pc/dist/*.exe
           retention-days: 30
 
   mac:
@@ -35,6 +41,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: app-test-pc/package-lock.json
       - run: npm ci
       - run: npm run dist:mac
         env:
@@ -42,5 +49,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: instalador-mac
-          path: dist/*.dmg
+          path: app-test-pc/dist/*.dmg
           retention-days: 30
