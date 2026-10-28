@@ -1,0 +1,23 @@
+appId: com.smartmarketing.editorvideo
+productName: Editor de Video
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+mac:
+  category: public.app-category.video
+  target:
+    - target: dmg
+      arch: [arm64]
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
