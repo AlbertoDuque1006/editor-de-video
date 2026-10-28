@@ -6,14 +6,26 @@ directories:
 files:
   - out/**
   - package.json
+  # Whisper (onnxruntime) trae binarios para todos los sistemas; solo se empaca el que toca.
+  - '!node_modules/onnxruntime-node/bin/napi-v*/linux/**'
+  - '!node_modules/onnxruntime-web/**'
+  # mediabunny ya va dentro del código de la interfaz.
+  - '!node_modules/mediabunny/**'
 asarUnpack:
   - node_modules/ffmpeg-static/**
+  - node_modules/onnxruntime-node/**
+  - node_modules/sharp/**
+  - node_modules/@img/**
 mac:
   category: public.app-category.video
+  files:
+    - '!node_modules/onnxruntime-node/bin/napi-v*/win32/**'
   target:
     - target: dmg
       arch: [arm64]
 win:
+  files:
+    - '!node_modules/onnxruntime-node/bin/napi-v*/darwin/**'
   target:
     - target: nsis
       arch: [x64]
