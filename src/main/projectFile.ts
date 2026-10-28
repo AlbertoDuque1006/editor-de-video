@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
+import { isRemotePath } from './media'
 import type { Item, Project } from '../shared/types'
 import { FORMATS } from '../shared/types'
 import { defaultAnim, defaultFilters, defaultTextStyle, defaultTransform, emptyProject, noTransition, normalizeProject } from '../shared/project'
@@ -53,7 +54,7 @@ export async function loadProjectData(raw: unknown): Promise<{ project: Project;
   const missing: string[] = []
   const media = []
   for (const m of p.media) {
-    if (!isObj(m) || typeof m.path !== 'string' || !isAbsolute(m.path)) continue
+    if (!isObj(m) || typeof m.path !== 'string' || !isAbsolute(m.path) || isRemotePath(m.path)) continue
     if (!existsSync(m.path)) {
       missing.push(typeof m.name === 'string' ? m.name : m.path)
       continue

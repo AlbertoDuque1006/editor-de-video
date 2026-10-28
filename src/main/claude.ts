@@ -36,10 +36,11 @@ async function candidates(custom: string | null): Promise<string[]> {
   const home = app.getPath('home')
   const list = custom ? [custom] : []
   const path = await userPath()
-  const names = isWin ? ['claude.exe', 'claude.cmd'] : ['claude']
+  // En Windows solo el .exe: los atajos .cmd de npm obligan a pasar por la shell y eso permitiría inyectar órdenes.
+  const names = isWin ? ['claude.exe'] : ['claude']
   for (const dir of path.split(delimiter)) for (const n of names) list.push(join(dir, n))
   if (isWin) {
-    list.push(join(home, '.local', 'bin', 'claude.exe'), join(process.env.APPDATA ?? '', 'npm', 'claude.cmd'))
+    list.push(join(home, '.local', 'bin', 'claude.exe'))
   } else {
     list.push(join(home, '.local/bin/claude'), join(home, '.claude/local/claude'), '/opt/homebrew/bin/claude', '/usr/local/bin/claude')
   }
@@ -64,7 +65,7 @@ export async function claudeStatus(custom: string | null): Promise<ClaudeStatus>
   if (!bin) return { found: false, path: null, version: null }
   const env = await spawnEnv(bin)
   const version = await new Promise<string | null>((resolve) => {
-    execFile(bin, ['--version'], { env, timeout: 15000, shell: isWin && bin.endsWith('.cmd') }, (err, stdout) => resolve(err ? null : stdout.trim()))
+    execFile(bin, ['--version'], { env, timeout: 15000 }, (err, stdout) => resolve(err ? null : stdout.trim()))
   })
   return { found: version !== null, path: bin, version }
 }
@@ -143,7 +144,7 @@ export async function runAi(req: AiRequest, custom: string | null, progress: (p:
   ]
 
   progress({ kind: 'status', text: 'Claude está pensando…' })
-  const child = spawn(bin, args, { cwd: dir, env: await spawnEnv(bin), windowsHide: true, shell: isWin && bin.endsWith('.cmd') })
+  const child = spawn(bin, args, { cwd: dir, env: await spawnEnv(bin), windowsHide: true })
   running.set(req.conversationId, child)
   child.stdin.end(prompt)
 

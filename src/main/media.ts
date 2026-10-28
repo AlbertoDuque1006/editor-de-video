@@ -20,8 +20,13 @@ const PLAYABLE_CONTAINERS = new Set(['.mp4', '.mov', '.m4v', '.webm'])
 const PLAYABLE_CODECS = new Set(['h264', 'hevc', 'vp8', 'vp9', 'av1'])
 
 /** Solo archivos locales que existen: evita que un proyecto ajeno haga leer URLs u otros protocolos a FFmpeg. */
+/** Rutas de red o de dispositivo (\\servidor\..., //servidor/..., \\?\...): abrirlas puede filtrar credenciales de Windows. */
+export function isRemotePath(path: string): boolean {
+  return /^[\\/]{2}/.test(path)
+}
+
 export function assertLocalFile(path: string): void {
-  if (typeof path !== 'string' || !isAbsolute(path) || /^[a-z][a-z0-9+.-]*:/i.test(path.replace(/^[a-z]:[\\/]/i, ''))) {
+  if (typeof path !== 'string' || !isAbsolute(path) || isRemotePath(path) || /^[a-z][a-z0-9+.-]*:/i.test(path.replace(/^[a-z]:[\\/]/i, ''))) {
     throw new Error(`Ruta no válida: ${path}`)
   }
   if (!statSync(path).isFile()) throw new Error(`No es un archivo: ${path}`)
