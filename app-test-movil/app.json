@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Editor Móvil",
+    "name": "Editor Movil",
     "slug": "editor-movil",
     "version": "0.1.0",
     "orientation": "portrait",
@@ -11,7 +11,8 @@
       "bundleIdentifier": "com.smartmarketing.editormovil",
       "infoPlist": {
         "NSSpeechRecognitionUsageDescription": "Para escribir los subtítulos de tus videos con lo que se dice en ellos.",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleDisplayName": "Editor Móvil"
       }
     },
     "plugins": [
