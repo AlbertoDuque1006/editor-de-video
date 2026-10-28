@@ -4,15 +4,18 @@ import { FORMATS } from '../../shared/types'
 import { emptyProject, findItem, findMedia, itemEnd, mainTrack, newAudio, newClip, totalDuration, uid } from '../../shared/project'
 import { applyOps, type Op } from '../../shared/ops'
 import { AiPanel, type ChatMessage, type ClaudeState, type QuickAction } from './AiPanel'
+import { clamp } from '../../shared/project'
 import { Cancelled, canDecode, canEncodeH264, renderVideo, type RenderJob } from './engine/exporter'
 import { Player } from './engine/player'
 import { useHistory } from './history'
+import { Icon } from './Icon'
 import { Inspector } from './Inspector'
 import { MediaBin, type MediaStatus } from './MediaBin'
 import { Preview } from './Preview'
 import { SettingsModal } from './SettingsModal'
+import { ShortcutsModal } from './Shortcuts'
 import { Timeline } from './Timeline'
-import { baseName, isTyping, type Selection } from './util'
+import { baseName, formatTime, isTyping, MOD, useEscape, type Selection } from './util'
 import { Wizard, type DraftRequest, type DraftStep } from './Wizard'
 
 type ExportState =
@@ -21,6 +24,23 @@ type ExportState =
   | { phase: 'audio'; ratio: number }
   | { phase: 'done'; path: string }
   | { phase: 'error'; message: string }
+
+// Lo que se ve de la ventana (paneles abiertos y alto de la línea de tiempo) se recuerda en este computador.
+type Layout = { left: boolean; right: boolean; tl: number }
+const LAYOUT_KEY = 'editor-video:layout'
+function loadLayout(): Layout {
+  const fallback = { left: true, right: true, tl: 300 }
+  try {
+    const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? '{}')
+    return {
+      left: typeof saved.left === 'boolean' ? saved.left : fallback.left,
+      right: typeof saved.right === 'boolean' ? saved.right : fallback.right,
+      tl: Number.isFinite(saved.tl) ? clamp(saved.tl, 190, Math.max(190, window.innerHeight - 320)) : fallback.tl
+    }
+  } catch {
+    return fallback
+  }
+}
 
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 
@@ -43,6 +63,10 @@ export default function App() {
   const [aiStatus, setAiStatus] = useState('')
   const [wizard, setWizard] = useState<{ steps: DraftStep[] | null } | null>({ steps: null })
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [safe, setSafe] = useState(false)
+  const [layout, setLayout] = useState<Layout>(loadLayout)
+  const fitRef = useRef<() => void>(() => {})
   const noticeTimer = useRef(0)
   const renderJob = useRef<RenderJob | null>(null)
 
@@ -58,6 +82,19 @@ export default function App() {
     document.title = `${path ? baseName(path) : 'Proyecto nuevo'}${dirty ? ' •' : ''} — Editor de Video`
     window.api.setDirty(dirty)
   }, [path, dirty])
+  useEffect(() => window.api.setRepresentedFile(path), [path])
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout))
+    } catch {
+      // Sin almacenamiento, la ventana abre con el diseño de siempre.
+    }
+  }, [layout])
+  const toggleLayout = (key: 'left' | 'right') => setLayout((l) => ({ ...l, [key]: !l[key] }))
+  const showLeft = (tab: 'media' | 'ai') => {
+    setLeftTab(tab)
+    setLayout((l) => ({ ...l, left: true }))
+  }
   useEffect(() => {
     if (sel && !findItem(project, sel)) setSel(null)
   }, [project, sel])
@@ -165,6 +202,7 @@ export default function App() {
     if (!paths.length) return
     notify('Leyendo archivos…')
     const items = await window.api.probePaths(paths)
+    setNotice(null)
     addMedia(items, paths.length - items.length)
   }
 
@@ -196,8 +234,8 @@ export default function App() {
   const pickLogo = () => {
     const img = project.media.find((m) => m.kind === 'image')
     if (!img) return notify('Importa primero la imagen del logo (PNG con fondo transparente).')
-    setLeftTab('media')
-    notify('Pulsa «Logo» en la imagen que quieras usar.')
+    showLeft('media')
+    notify('Haz clic derecho en la imagen que quieras usar y elige «Usar como logo».')
   }
 
   const removeMedia = (m: MediaItem) =>
@@ -340,7 +378,7 @@ export default function App() {
 
   const quick = useCallback(
     async (action: QuickAction) => {
-      setLeftTab('ai')
+      showLeft('ai')
       const hasCaptions = () => projectRef.current.tracks.some((t) => t.items.some((i) => i.type === 'captions'))
       if (action === 'captions' || action === 'silences') {
         setAiBusy(true)
@@ -355,7 +393,7 @@ export default function App() {
               const saved = before - totalDuration(projectRef.current)
               say({
                 role: 'info',
-                text: saved > 0.05 ? `Listo: quité ${saved.toFixed(1)} s de silencios y muletillas. Revisa el resultado; con ⌘Z lo deshaces.` : 'No encontré silencios largos ni muletillas que cortar.'
+                text: saved > 0.05 ? `Listo: quité ${saved.toFixed(1)} s de silencios y muletillas. Revisa el resultado; con ${MOD}Z lo deshaces.` : 'No encontré silencios largos ni muletillas que cortar.'
               })
             }
           } else {
@@ -435,7 +473,7 @@ export default function App() {
       if (req.musicId && !projectRef.current.tracks.some((t) => t.kind === 'audio' && t.items.length)) run([{ op: 'set_music', mediaId: req.musicId, volume: 0.4 }], true)
       setStep(3, { state: 'done' })
       seek(0)
-      setLeftTab('ai')
+      showLeft('ai')
     } catch (err) {
       const i = steps.findIndex((s) => s.state === 'running')
       if (i >= 0) setStep(i, { state: 'error', detail: errText(err) })
@@ -443,11 +481,18 @@ export default function App() {
   }
 
   // --- Proyecto ---
-  const confirmDiscard = () => !dirty || window.confirm('Hay cambios sin guardar. ¿Descartarlos?')
+  const confirmDiscard = async () =>
+    !dirty ||
+    (await window.api.confirm({
+      message: '¿Descartar los cambios sin guardar?',
+      detail: 'El proyecto tiene cambios que no se han guardado. Si sigues, se pierden.',
+      confirm: 'Descartar cambios',
+      destructive: true
+    }))
 
   const newProject = useCallback(
     async (withWizard: boolean) => {
-      if (!confirmDiscard()) return
+      if (!(await confirmDiscard())) return
       pause()
       const { settings } = await window.api.getSettings()
       const p = { ...emptyProject(), brand: { ...settings.brand, logoMediaId: null } }
@@ -475,7 +520,7 @@ export default function App() {
   )
 
   const open = useCallback(async () => {
-    if (!confirmDiscard()) return
+    if (!(await confirmDiscard())) return
     try {
       const res = await window.api.openProject()
       if (!res) return
@@ -537,16 +582,24 @@ export default function App() {
   )
 
   // --- Menú y teclado ---
-  const handlers = { newProject, open, save, startExport, importFiles, undo, redo, duplicate }
+  const zoomBy = (f: number) => setPps((p) => clamp(p * f, 8, 300))
+  const handlers = { newProject, open, save, startExport, importFiles, undo, redo, duplicate, zoomBy, toggleLayout, showLeft }
   const handlersRef = useRef(handlers)
   handlersRef.current = handlers
+  // Con una ventana encima, el menú no toca el proyecto de atrás. Desde el asistente sí se puede importar o abrir.
+  const modalRef = useRef<'none' | 'wizard' | 'blocking'>('none')
+  modalRef.current =
+    settingsOpen || shortcutsOpen || exp.phase !== 'idle' || wizard?.steps ? 'blocking' : wizard ? 'wizard' : 'none'
 
   useEffect(
     () =>
       window.api.onMenu((cmd) => {
         const h = handlersRef.current
+        const typing = isTyping(document.activeElement)
+        const modal = modalRef.current
+        if (modal !== 'none' && !(typing && (cmd === 'undo' || cmd === 'redo')) && !(modal === 'wizard' && ['import', 'open', 'settings', 'shortcuts'].includes(cmd))) return
         if (cmd === 'undo' || cmd === 'redo') {
-          if (isTyping(document.activeElement)) document.execCommand(cmd)
+          if (typing) document.execCommand(cmd)
           else h[cmd]()
         } else if (cmd === 'new') void h.newProject(true)
         else if (cmd === 'open') void h.open()
@@ -554,17 +607,26 @@ export default function App() {
         else if (cmd === 'saveAs') void h.save(true)
         else if (cmd === 'import') void h.importFiles()
         else if (cmd === 'export') void h.startExport()
+        else if (cmd === 'duplicate') {
+          if (isTyping(document.activeElement)) return
+          h.duplicate()
+        } else if (cmd === 'zoomIn') h.zoomBy(1.4)
+        else if (cmd === 'zoomOut') h.zoomBy(1 / 1.4)
+        else if (cmd === 'zoomFit') fitRef.current()
+        else if (cmd === 'panelMedia') h.showLeft('media')
+        else if (cmd === 'panelAi') h.showLeft('ai')
+        else if (cmd === 'toggleSidebar') h.toggleLayout('left')
+        else if (cmd === 'toggleInspector') h.toggleLayout('right')
+        else if (cmd === 'safe') setSafe((v) => !v)
+        else if (cmd === 'shortcuts') setShortcutsOpen(true)
+        else if (cmd === 'settings') setSettingsOpen(true)
       }),
     []
   )
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(document.activeElement) || e.altKey || exp.phase !== 'idle' || wizard || settingsOpen) return
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
-        e.preventDefault()
-        return duplicate()
-      }
+      if (isTyping(document.activeElement) || e.altKey || exp.phase !== 'idle' || wizard || settingsOpen || shortcutsOpen) return
       if (e.metaKey || e.ctrlKey) return
       const frame = e.shiftKey ? 1 : 1 / 30
       if (e.key === ' ') togglePlay()
@@ -580,43 +642,74 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [togglePlay, deleteSel, split, duplicate, seek, player, total, exp.phase, wizard, settingsOpen])
+  }, [togglePlay, deleteSel, split, seek, player, total, exp.phase, wizard, settingsOpen, shortcutsOpen])
+
+  const exporting = exp.phase === 'video' || exp.phase === 'audio'
+  useEscape(exp.phase === 'done' || exp.phase === 'error' ? () => setExp({ phase: 'idle' }) : exporting ? cancelExport : null)
 
   const exportRatio = exp.phase === 'video' ? exp.ratio * 0.92 : exp.phase === 'audio' ? 0.92 + exp.ratio * 0.08 : 1
 
   return (
-    <div className="app" onDragOver={(e) => e.preventDefault()} onDrop={onDropFiles}>
+    <div
+      className={`app ${layout.left ? '' : 'no-left'} ${layout.right ? '' : 'no-right'}`}
+      style={{ '--left': layout.left ? '300px' : '0px', '--right': layout.right ? '300px' : '0px', '--tl': `${layout.tl}px` } as React.CSSProperties}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={onDropFiles}
+    >
       <header className="topbar">
-        <div className="group">
-          <button onClick={() => void newProject(true)} title="Proyecto nuevo con el asistente de Claude">
-            ✨ Nuevo
-          </button>
-          <button onClick={() => void open()}>Abrir</button>
-          <button onClick={() => void save(false)} className={dirty ? 'dirty' : ''}>
-            Guardar
+        <div className="tb-group">
+          <button className="plain icon" onClick={() => toggleLayout('left')} title="Mostrar u ocultar la barra lateral" aria-label="Barra lateral" aria-pressed={layout.left}>
+            <Icon name="sidebarLeft" size={17} />
           </button>
         </div>
-        <div className="group">
-          <button className="icon" onClick={undo} disabled={!canUndo} title="Deshacer">
-            ↶
+        <span className="tb-sep" />
+        <div className="tb-group">
+          <button className="plain" onClick={() => void newProject(true)} title={`Proyecto nuevo con el asistente de Claude (${MOD}N)`}>
+            <Icon name="sparkles" size={16} /> Nuevo
           </button>
-          <button className="icon" onClick={redo} disabled={!canRedo} title="Rehacer">
-            ↷
+          <button className="plain icon" onClick={() => void open()} title={`Abrir proyecto (${MOD}O)`} aria-label="Abrir proyecto">
+            <Icon name="folder" size={17} />
+          </button>
+          <button className="plain icon" onClick={() => void save(false)} title={`Guardar (${MOD}S)`} aria-label="Guardar">
+            <Icon name="save" size={17} />
+          </button>
+          <button className="plain icon" onClick={() => void importFiles()} title={`Importar archivos (${MOD}I)`} aria-label="Importar archivos">
+            <Icon name="import" size={17} />
           </button>
         </div>
-        <span className="title">{path ? baseName(path) : 'Proyecto nuevo'}</span>
-        <select value={project.format} onChange={(e) => update((p) => ({ ...p, format: e.target.value as Project['format'] }))}>
+        <span className="tb-sep" />
+        <div className="tb-group">
+          <button className="plain icon" onClick={undo} disabled={!canUndo} title={`Deshacer (${MOD}Z)`} aria-label="Deshacer">
+            <Icon name="undo" size={17} />
+          </button>
+          <button className="plain icon" onClick={redo} disabled={!canRedo} title="Rehacer" aria-label="Rehacer">
+            <Icon name="redo" size={17} />
+          </button>
+        </div>
+        <div className="tb-title">
+          <b>{path ? baseName(path).replace(/\.edvideo$/, '') : 'Proyecto nuevo'}</b>
+          <span>
+            {dirty ? <span className="edited">Editado</span> : path ? 'Guardado' : 'Sin guardar'}
+            {total > 0 && ` · ${formatTime(total)}`}
+          </span>
+        </div>
+        <select value={project.format} title="Formato del video" aria-label="Formato del video" onChange={(e) => update((p) => ({ ...p, format: e.target.value as Project['format'] }))}>
           {Object.entries(FORMATS).map(([id, f]) => (
             <option key={id} value={id}>
-              {f.label}
+              {f.label.replace(/ \(.*\)$/, '')}
             </option>
           ))}
         </select>
-        <button className="icon" title="Ajustes" onClick={() => setSettingsOpen(true)}>
-          ⚙︎
-        </button>
-        <button className="primary" onClick={() => void startExport()} disabled={total <= 0}>
-          Exportar video
+        <div className="tb-group">
+          <button className="plain icon" title={`Ajustes (${MOD},)`} aria-label="Ajustes" onClick={() => setSettingsOpen(true)}>
+            <Icon name="gear" size={17} />
+          </button>
+          <button className="plain icon" onClick={() => toggleLayout('right')} title={`Mostrar u ocultar el inspector (${MOD}4)`} aria-label="Inspector" aria-pressed={layout.right}>
+            <Icon name="sidebarRight" size={17} />
+          </button>
+        </div>
+        <button className="primary" onClick={() => void startExport()} disabled={total <= 0} title={`Exportar video (${MOD}E)`}>
+          <Icon name="share" size={15} /> Exportar
         </button>
       </header>
 
@@ -626,7 +719,7 @@ export default function App() {
             Archivos
           </button>
           <button className={leftTab === 'ai' ? 'on' : ''} onClick={() => setLeftTab('ai')}>
-            ✨ IA {aiBusy && <span className="dot" />}
+            Asistente IA {aiBusy && <span className="dot" />}
           </button>
         </div>
         {leftTab === 'media' ? (
@@ -657,9 +750,18 @@ export default function App() {
         )}
       </aside>
 
-      <Preview player={player} project={project} time={time} playing={playing} sel={sel} onTime={setTime} onSelect={setSel} onTogglePlay={togglePlay} onSeek={seek} update={update} />
+      <Preview
+        player={player}
+        project={project}
+        time={time}
+        playing={playing}
+        sel={sel}
+        safe={safe}
+        onToggleSafe={() => setSafe((v) => !v)}
+        onImport={() => void importFiles()}
+        onTime={setTime} onSelect={setSel} onTogglePlay={togglePlay} onSeek={seek} update={update} />
 
-      <Inspector project={project} sel={sel} time={time} update={update} onSeek={seek} onSplit={split} onDuplicate={duplicate} onDelete={deleteSel} onSetLogo={pickLogo} />
+      <Inspector project={project} sel={sel} time={time} update={update} onSeek={seek} onSplit={split} onDuplicate={duplicate} onDelete={deleteSel} onSetLogo={pickLogo} onShortcuts={() => setShortcutsOpen(true)} />
 
       <Timeline
         project={project}
@@ -674,10 +776,19 @@ export default function App() {
         onDropMedia={onDropMedia}
         onAddText={addText}
         onSplit={split}
+        onDuplicate={duplicate}
         onDelete={deleteSel}
+        height={layout.tl}
+        onHeight={(tl) => setLayout((l) => ({ ...l, tl }))}
+        fitRef={fitRef}
       />
 
-      {notice && <div className="toast">{notice}</div>}
+      {notice && (
+        <div className="toast" role="status">
+          <Icon name="info" size={15} />
+          {notice}
+        </div>
+      )}
 
       {wizard && (
         <Wizard
@@ -690,22 +801,25 @@ export default function App() {
         />
       )}
 
+      {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
+
       {settingsOpen && <SettingsModal claude={claude.checked ? claude : null} onRecheck={() => void checkClaude()} onLogin={() => window.api.aiLogin()} onClose={() => setSettingsOpen(false)} />}
 
       {exp.phase !== 'idle' && (
         <div className="modal-back">
-          <div className="modal">
-            {(exp.phase === 'video' || exp.phase === 'audio') && (
+          <div className="modal center" role="dialog">
+            {exporting && (
               <>
-                <h3>
-                  {exp.phase === 'video' ? 'Renderizando la imagen…' : 'Mezclando el audio…'} {Math.round(exportRatio * 100)} %
-                </h3>
+                <div className="big-icon">
+                  <Icon name="share" size={24} />
+                </div>
+                <h2>{exp.phase === 'video' ? 'Exportando la imagen…' : 'Mezclando el audio…'}</h2>
+                <p className="lead">
+                  {Math.round(exportRatio * 100)} % · {FORMATS[project.format].width}×{FORMATS[project.format].height}, MP4 a 30 cuadros por segundo
+                </p>
                 <div className="progress">
                   <div style={{ width: `${exportRatio * 100}%` }} />
                 </div>
-                <p className="muted small">
-                  {FORMATS[project.format].width}×{FORMATS[project.format].height}, MP4 a 30 cuadros por segundo. No cierres la app.
-                </p>
                 <div className="buttons">
                   <button onClick={cancelExport}>Cancelar</button>
                 </div>
@@ -713,22 +827,30 @@ export default function App() {
             )}
             {exp.phase === 'done' && (
               <>
-                <h3>¡Listo!</h3>
-                <p className="file-name">{baseName(exp.path)}</p>
+                <div className="big-icon ok">
+                  <Icon name="check" size={26} />
+                </div>
+                <h2>Video exportado</h2>
+                <p className="lead file-name">{baseName(exp.path)}</p>
                 <div className="buttons">
-                  <button className="primary" onClick={() => window.api.showInFolder(exp.path)}>
+                  <button onClick={() => setExp({ phase: 'idle' })}>Cerrar</button>
+                  <button className="primary" autoFocus onClick={() => window.api.showInFolder(exp.path)}>
                     {window.api.platform === 'darwin' ? 'Mostrar en Finder' : 'Mostrar en la carpeta'}
                   </button>
-                  <button onClick={() => setExp({ phase: 'idle' })}>Cerrar</button>
                 </div>
               </>
             )}
             {exp.phase === 'error' && (
               <>
-                <h3>No se pudo exportar</h3>
+                <div className="big-icon bad">
+                  <Icon name="warning" size={24} />
+                </div>
+                <h2>No se pudo exportar</h2>
                 <pre className="error">{exp.message}</pre>
                 <div className="buttons">
-                  <button onClick={() => setExp({ phase: 'idle' })}>Cerrar</button>
+                  <button className="primary" autoFocus onClick={() => setExp({ phase: 'idle' })}>
+                    Cerrar
+                  </button>
                 </div>
               </>
             )}

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { Settings } from '../../preload/index'
 import { FONTS } from './engine/compose'
+import { Icon } from './Icon'
+import { useEscape } from './util'
 
 interface Props {
   claude: { found: boolean; path: string | null; version: string | null } | null
@@ -26,6 +28,7 @@ export function SettingsModal({ claude, onRecheck, onLogin, onClose }: Props) {
     })
   }, [])
 
+  useEscape(onClose)
   const save = async (patch: Partial<Settings>) => setS(await window.api.setSettings(patch))
 
   return (
@@ -33,22 +36,30 @@ export function SettingsModal({ claude, onRecheck, onLogin, onClose }: Props) {
       <div className="modal settings">
         <h2>Ajustes</h2>
         <h4>Claude Code</h4>
-        {claude?.found ? (
-          <p className="small">
-            ✓ {claude.version} <span className="muted mono">{claude.path}</span>
-          </p>
-        ) : (
-          <p className="small ai-warning">No se encontró Claude Code. Instálalo y abre una terminal con «claude» para iniciar sesión.</p>
-        )}
-        <div className="buttons">
-          <button onClick={onRecheck}>Volver a buscar</button>
-          <button onClick={onLogin}>Abrir terminal para iniciar sesión</button>
-        </div>
+        <div className="group-box">
+          {claude?.found ? (
+            <p className="small status-line">
+              <Icon name="check" size={14} className="ok" /> {claude.version}
+              <span className="muted mono">{claude.path}</span>
+            </p>
+          ) : (
+            <p className="small ai-warning">
+              <Icon name="warning" size={15} /> No se encontró Claude Code. Instálalo y abre una terminal con «claude» para iniciar sesión.
+            </p>
+          )}
+          <div className="buttons" style={{ marginTop: 0, marginBottom: 12 }}>
+            <button className="small" onClick={onRecheck}>
+              Volver a buscar
+            </button>
+            <button className="small" onClick={onLogin}>
+              Abrir terminal para iniciar sesión
+            </button>
+          </div>
         {s && (
           <>
             <label className="field">
               <span>Ruta de Claude Code (déjalo vacío para buscarlo solo)</span>
-              <input type="text" className="text mono" value={s.claudePath ?? ''} placeholder="/opt/homebrew/bin/claude" onChange={(e) => setS({ ...s, claudePath: e.target.value || null })} onBlur={() => void save({ claudePath: s.claudePath })} />
+              <input type="text" className="text mono" spellCheck={false} value={s.claudePath ?? ''} placeholder="/opt/homebrew/bin/claude" onChange={(e) => setS({ ...s, claudePath: e.target.value || null })} onBlur={() => void save({ claudePath: s.claudePath })} />
             </label>
             <label className="field">
               <span>Modelo</span>
@@ -60,8 +71,13 @@ export function SettingsModal({ claude, onRecheck, onLogin, onClose }: Props) {
                 ))}
               </select>
             </label>
-
+          </>
+        )}
+        </div>
+        {s && (
+          <>
             <h4>Transcripción (Whisper, funciona sin internet)</h4>
+            <div className="group-box">
             <label className="field">
               <span>Modelo de voz a texto (se descarga la primera vez)</span>
               <select value={s.whisperModel} onChange={(e) => void save({ whisperModel: e.target.value as Settings['whisperModel'] })}>
@@ -80,8 +96,10 @@ export function SettingsModal({ claude, onRecheck, onLogin, onClose }: Props) {
                 <option value="portuguese">Portugués</option>
               </select>
             </label>
+            </div>
 
             <h4>Marca para proyectos nuevos</h4>
+            <div className="group-box">
             <div className="row">
               <label className="field">
                 <span>Letra</span>
@@ -102,10 +120,11 @@ export function SettingsModal({ claude, onRecheck, onLogin, onClose }: Props) {
                 <input type="color" value={s.brand.secondary} onChange={(e) => void save({ brand: { ...s.brand, secondary: e.target.value } })} />
               </label>
             </div>
+            </div>
           </>
         )}
         <div className="buttons end">
-          <button className="primary" onClick={onClose}>
+          <button className="primary" autoFocus onClick={onClose}>
             Listo
           </button>
         </div>

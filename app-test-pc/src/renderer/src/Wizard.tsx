@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import type { FormatId, MediaItem } from '../../shared/types'
 import { FORMATS } from '../../shared/types'
-import { formatTime } from './util'
+import { Icon } from './Icon'
+import { formatTime, MOD, useEscape } from './util'
 
 export interface DraftRequest {
   goal: string
@@ -48,6 +49,8 @@ export function Wizard({ media, claudeReady, steps, onImport, onCreate, onClose 
   const music = musicId ?? audios[0]?.id ?? null
   const hasVoice = media.some((m) => m.kind === 'video' && m.hasAudio)
   const visual = media.filter((m) => m.kind !== 'audio')
+  const running = !!steps && steps.some((s) => s.state === 'running')
+  useEscape(running ? null : onClose)
 
   if (steps) {
     const failed = steps.some((s) => s.state === 'error')
@@ -55,11 +58,14 @@ export function Wizard({ media, claudeReady, steps, onImport, onCreate, onClose 
     return (
       <div className="modal-back">
         <div className="modal wizard">
-          <h2>{done ? '¡Listo tu primer borrador!' : failed ? 'Algo salió mal' : 'Claude está armando tu video…'}</h2>
+          <h2>{done ? 'Tu primer borrador está listo' : failed ? 'Algo salió mal' : 'Claude está armando tu video…'}</h2>
+          <p className="lead">{done ? `Revísalo y ajústalo a mano o por chat. Con ${MOD}Z deshaces cualquier cambio.` : failed ? 'Puedes cerrar y seguir a mano, o intentarlo de nuevo.' : 'Puede tomar uno o dos minutos. No cierres la app.'}</p>
           <ol className="steps">
             {steps.map((s, i) => (
               <li key={i} className={s.state}>
-                <span className="step-icon">{s.state === 'done' ? '✓' : s.state === 'error' ? '✕' : s.state === 'running' ? <span className="spin" /> : '·'}</span>
+                <span className="step-icon">
+                  {s.state === 'done' ? <Icon name="check" size={15} /> : s.state === 'error' ? <Icon name="close" size={14} /> : s.state === 'running' ? <span className="spin" /> : <Icon name="diamond" size={6} />}
+                </span>
                 <span>
                   {s.label}
                   {s.detail && <span className="muted small"> — {s.detail}</span>}
@@ -68,8 +74,8 @@ export function Wizard({ media, claudeReady, steps, onImport, onCreate, onClose 
             ))}
           </ol>
           {(done || failed) && (
-            <div className="buttons">
-              <button className="primary" onClick={onClose}>
+            <div className="buttons end">
+              <button className="primary" autoFocus onClick={onClose}>
                 {done ? 'Ver y seguir editando' : 'Cerrar'}
               </button>
             </div>
@@ -83,23 +89,26 @@ export function Wizard({ media, claudeReady, steps, onImport, onCreate, onClose 
     <div className="modal-back">
       <div className="modal wizard">
         <h2>Nuevo video con Claude</h2>
-        <p className="muted">Sube tu material, cuéntale qué quieres y Claude arma el primer borrador. Después lo ajustas a mano o por chat.</p>
+        <p className="lead">Sube tu material, cuéntale qué quieres y Claude arma el primer borrador. Después lo ajustas a mano o por chat.</p>
 
         <div className="wizard-section">
           <div className="bin-head">
             <h4>1. Tu material</h4>
             <button className="small" onClick={onImport}>
-              Agregar archivos
+              <Icon name="plus" size={12} /> Agregar archivos
             </button>
           </div>
           {media.length === 0 ? (
-            <div className="drop-hint">Arrastra aquí videos, fotos, música y tu logo</div>
+            <div className="drop-hint">
+              <Icon name="import" size={26} />
+              Arrastra aquí videos, fotos, música y tu logo
+            </div>
           ) : (
             <div className="wizard-media">
               {media.map((m) => (
                 <div key={m.id} className="wm" title={m.name}>
-                  <div className="thumb" style={m.thumb ? { backgroundImage: `url("${m.thumb}")` } : undefined}>
-                    {m.kind === 'audio' && <span>♪</span>}
+                  <div className={`mc-thumb ${m.kind}`} style={m.thumb ? { backgroundImage: `url("${m.thumb}")` } : undefined}>
+                    {m.kind === 'audio' && <Icon name="music" size={18} />}
                   </div>
                   <span className="small">{m.kind === 'image' ? 'Foto' : formatTime(m.duration)}</span>
                 </div>
@@ -181,7 +190,11 @@ export function Wizard({ media, claudeReady, steps, onImport, onCreate, onClose 
           </div>
         )}
 
-        {!claudeReady && <p className="ai-warning small">Claude Code no está disponible en este computador. Revisa los ajustes de IA.</p>}
+        {!claudeReady && (
+          <p className="ai-warning small">
+            <Icon name="warning" size={15} /> Claude Code no está disponible en este computador. Revísalo en Ajustes.
+          </p>
+        )}
 
         <div className="buttons end">
           <button onClick={onClose}>Empezar en blanco</button>
@@ -190,7 +203,7 @@ export function Wizard({ media, claudeReady, steps, onImport, onCreate, onClose 
             disabled={!claudeReady || visual.length === 0}
             onClick={() => onCreate({ goal, format, seconds, captions: hasVoice && captions, cutSilences: hasVoice && cutSilences, logoId, musicId: music })}
           >
-            ✨ Crear con Claude
+            <Icon name="sparkles" size={14} /> Crear con Claude
           </button>
         </div>
       </div>

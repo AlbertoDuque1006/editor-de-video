@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { Project } from '../../shared/types'
 
 export type Update = (fn: (p: Project) => Project, key?: string) => void
@@ -35,3 +36,35 @@ export function drag(e: React.PointerEvent, onMove: (dx: number, dy: number, ev:
   window.addEventListener('pointermove', move)
   window.addEventListener('pointerup', up)
 }
+
+/** Ventanas abiertas, de la de más abajo a la de más arriba: Esc solo cierra la de arriba. */
+const escapeStack: { current: (() => void) | null }[] = []
+let escapeListening = false
+
+function onEscapeKey(e: KeyboardEvent) {
+  if (e.key !== 'Escape') return
+  const top = [...escapeStack].reverse().find((r) => r.current)
+  if (!top?.current) return
+  e.preventDefault()
+  e.stopImmediatePropagation()
+  top.current()
+}
+
+/** Esc cierra la ventana abierta (como las hojas de Mac). Con `null`, esa ventana no se deja cerrar con Esc. */
+export function useEscape(onEscape: (() => void) | null): void {
+  const ref = useRef(onEscape)
+  ref.current = onEscape
+  useEffect(() => {
+    if (!escapeListening) {
+      window.addEventListener('keydown', onEscapeKey, true)
+      escapeListening = true
+    }
+    escapeStack.push(ref)
+    return () => {
+      escapeStack.splice(escapeStack.indexOf(ref), 1)
+    }
+  }, [])
+}
+
+/** Atajo con ⌘ en Mac y Ctrl en Windows, para mostrar en textos. */
+export const MOD = typeof window !== 'undefined' && window.api?.platform === 'darwin' ? '⌘' : 'Ctrl'

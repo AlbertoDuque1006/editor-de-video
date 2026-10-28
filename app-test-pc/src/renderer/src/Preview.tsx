@@ -5,6 +5,7 @@ import { clamp, findItem, mapItem, totalDuration } from '../../shared/project'
 import { upsertKeyframe } from './engine/anim'
 import type { Hit } from './engine/compose'
 import type { Player } from './engine/player'
+import { Icon } from './Icon'
 import { formatTime, type Selection, type Update } from './util'
 
 interface Props {
@@ -13,6 +14,9 @@ interface Props {
   time: number
   playing: boolean
   sel: Selection
+  safe: boolean
+  onToggleSafe: () => void
+  onImport: () => void
   onTime: (t: number) => void
   onSelect: (s: Selection) => void
   onTogglePlay: () => void
@@ -20,12 +24,11 @@ interface Props {
   update: Update
 }
 
-export function Preview({ player, project, time, playing, sel, onTime, onSelect, onTogglePlay, onSeek, update }: Props) {
+export function Preview({ player, project, time, playing, sel, safe, onToggleSafe, onImport, onTime, onSelect, onTogglePlay, onSeek, update }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hitsRef = useRef<Hit[]>([])
   const [size, setSize] = useState({ w: 0, h: 0 })
-  const [safe, setSafe] = useState(false)
   const { width: W, height: H } = FORMATS[project.format]
 
   // El lienzo ocupa el mayor tamaño posible con la proporción del formato.
@@ -44,6 +47,9 @@ export function Preview({ player, project, time, playing, sel, onTime, onSelect,
   onTimeRef.current = onTime
   const selRef = useRef(sel)
   selRef.current = sel
+  // Un clip del video principal llena el cuadro: marcarlo con un borde solo estorba.
+  const outlineRef = useRef(false)
+  outlineRef.current = !!sel && findItem(project, sel)?.track.kind !== 'main'
 
   useEffect(() => {
     let raf = 0
@@ -57,9 +63,9 @@ export function Preview({ player, project, time, playing, sel, onTime, onSelect,
         const scale = c.width / W
         ctx.setTransform(scale, 0, 0, scale, 0, 0)
         hitsRef.current = player.draw(ctx, W, H)
-        const hit = hitsRef.current.find((h) => h.id === selRef.current)
+        const hit = outlineRef.current && hitsRef.current.find((h) => h.id === selRef.current)
         if (hit) {
-          ctx.strokeStyle = '#7c9cff'
+          ctx.strokeStyle = '#ffd60a'
           ctx.lineWidth = 3 / scale
           ctx.setLineDash([10 / scale, 6 / scale])
           ctx.strokeRect(hit.x, hit.y, hit.w, hit.h)
@@ -126,8 +132,12 @@ export function Preview({ player, project, time, playing, sel, onTime, onSelect,
       <div className="stage-canvas" ref={wrapRef}>
         {empty ? (
           <div className="stage-empty">
-            <p>Arrastra aquí tus videos, fotos o música</p>
-            <p className="muted">o pídele a Claude que arme el video en la pestaña «IA»</p>
+            <Icon name="film" size={40} />
+            <b>Empieza tu video</b>
+            <p>Arrastra aquí tus videos, fotos o música, o pídele a Claude que arme el video en la pestaña «IA».</p>
+            <button className="primary" onClick={onImport}>
+              <Icon name="plus" size={14} /> Importar archivos
+            </button>
           </div>
         ) : (
           <div className="canvas-wrap" style={{ width: size.w, height: size.h }}>
@@ -143,24 +153,31 @@ export function Preview({ player, project, time, playing, sel, onTime, onSelect,
         )}
       </div>
       <div className="transport">
-        <button className="icon" title="Ir al inicio (Inicio)" onClick={() => onSeek(0)}>
-          ⏮
-        </button>
-        <button className="icon" title="Un cuadro atrás (←)" onClick={() => onSeek(time - 1 / 30)}>
-          ◀︎
-        </button>
-        <button className="icon play" title="Reproducir / pausar (espacio)" onClick={onTogglePlay} disabled={total === 0}>
-          {playing ? '❚❚' : '▶'}
-        </button>
-        <button className="icon" title="Un cuadro adelante (→)" onClick={() => onSeek(time + 1 / 30)}>
-          ▶︎
-        </button>
         <span className="timecode">
           {formatTime(time)} <span className="muted">/ {formatTime(total)}</span>
         </span>
-        <label className="safe-toggle" title="Muestra dónde tapan los botones de Reels y TikTok">
-          <input type="checkbox" checked={safe} onChange={(e) => setSafe(e.target.checked)} /> Zona segura
-        </label>
+        <div className="transport-center">
+          <button className="plain icon" title="Ir al inicio (Inicio)" aria-label="Ir al inicio" onClick={() => onSeek(0)}>
+            <Icon name="toStart" size={15} />
+          </button>
+          <button className="plain icon" title="Un cuadro atrás (←)" aria-label="Un cuadro atrás" onClick={() => onSeek(time - 1 / 30)}>
+            <Icon name="frameBack" size={16} />
+          </button>
+          <button className="play" title="Reproducir o pausar (espacio)" aria-label={playing ? 'Pausar' : 'Reproducir'} onClick={onTogglePlay} disabled={total === 0}>
+            <Icon name={playing ? 'pause' : 'play'} size={18} />
+          </button>
+          <button className="plain icon" title="Un cuadro adelante (→)" aria-label="Un cuadro adelante" onClick={() => onSeek(time + 1 / 30)}>
+            <Icon name="frameForward" size={16} />
+          </button>
+          <button className="plain icon" title="Ir al final (Fin)" aria-label="Ir al final" onClick={() => onSeek(total)}>
+            <Icon name="toStart" size={15} className="flip" />
+          </button>
+        </div>
+        <div className="transport-right">
+          <button className={`plain ${safe ? 'on' : ''}`} title="Muestra dónde tapan los botones de Reels y TikTok" onClick={onToggleSafe} aria-pressed={safe}>
+            <Icon name="safe" size={15} /> Zona segura
+          </button>
+        </div>
       </div>
     </section>
   )

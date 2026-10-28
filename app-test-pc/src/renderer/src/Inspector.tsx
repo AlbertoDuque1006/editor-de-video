@@ -18,6 +18,7 @@ import { CAPTION_PRESETS, FILTER_PRESETS, FORMATS, IN_ANIMS, LOOP_ANIMS, OUT_ANI
 import { clamp, defaultFilters, findItem, findMedia, mapItem, MIN_DURATION } from '../../shared/project'
 import { baseValue, upsertKeyframe } from './engine/anim'
 import { FONTS } from './engine/compose'
+import { Icon, type IconName } from './Icon'
 import { formatTime, type Update } from './util'
 
 interface Props {
@@ -30,6 +31,7 @@ interface Props {
   onDuplicate: () => void
   onDelete: () => void
   onSetLogo: () => void
+  onShortcuts: () => void
 }
 
 // --- Controles ---
@@ -66,12 +68,21 @@ function Range({ label, value, onChange, min, max, step, display, keyed, onKey }
       <span>
         {onKey && (
           <button className={`kf-btn ${keyed ?? ''}`} onClick={onKey} title={keyed === 'off' ? 'Animar esta propiedad (agrega un keyframe aquí)' : keyed === 'on' ? 'Quitar el keyframe de este punto' : 'Agregar keyframe aquí'}>
-            ◆
+            <Icon name="diamond" size={10} />
           </button>
         )}
         {label} <b>{display}</b>
       </span>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+      <input
+        type="range"
+        aria-label={label}
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        style={{ '--p': `${clamp((value - min) / (max - min), 0, 1) * 100}%` } as React.CSSProperties}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
     </div>
   )
 }
@@ -110,11 +121,11 @@ function Color({ label, value, onChange, alpha }: { label: string; value: string
 }
 
 const NAMES: Record<string, string> = {
-  none: 'Ninguna', fade: 'Desvanecer', 'slide-up': 'Deslizar hacia arriba', 'slide-down': 'Deslizar hacia abajo', 'slide-left': 'Deslizar a la izquierda',
-  'slide-right': 'Deslizar a la derecha', 'zoom-in': 'Acercar', 'zoom-out': 'Alejar', pop: 'Rebote (pop)', spin: 'Girar', blur: 'Desenfoque',
+  none: 'Ninguna', fade: 'Desvanecer', 'slide-up': 'Deslizar ↑', 'slide-down': 'Deslizar ↓', 'slide-left': 'Deslizar ←',
+  'slide-right': 'Deslizar →', 'zoom-in': 'Acercar', 'zoom-out': 'Alejar', pop: 'Rebote (pop)', spin: 'Girar', blur: 'Desenfoque',
   typewriter: 'Máquina de escribir', words: 'Palabra por palabra', 'ken-burns-in': 'Ken Burns: acercar lento', 'ken-burns-out': 'Ken Burns: alejar lento',
   'pan-left': 'Paneo a la izquierda', 'pan-right': 'Paneo a la derecha', pulse: 'Latido', float: 'Flotar', shake: 'Temblor',
-  'fade-black': 'Fundido a negro', zoom: 'Zoom', 'wipe-left': 'Cortina a la izquierda', 'wipe-right': 'Cortina a la derecha',
+  'fade-black': 'Fundido a negro', zoom: 'Zoom', 'wipe-left': 'Cortina ←', 'wipe-right': 'Cortina →',
   bw: 'Blanco y negro', warm: 'Cálido', cool: 'Frío', vintage: 'Vintage', vivid: 'Vivo', cinema: 'Cine',
   karaoke: 'Karaoke (resalta la palabra)', line: 'Frase simple', bounce: 'Salto en la palabra',
   linear: 'Lineal', 'ease-in': 'Acelera', 'ease-out': 'Frena', 'ease-in-out': 'Suave', 'back-out': 'Rebote suave'
@@ -201,10 +212,14 @@ function ClipSettings({ clip, project, set, track, props }: { clip: VideoClip; p
         </div>
       </div>
       <div className="buttons">
-        <button onClick={props.onSplit}>✂ Dividir en el cursor</button>
-        <button onClick={props.onDuplicate}>Duplicar</button>
+        <button onClick={props.onSplit}>
+          <Icon name="scissors" size={14} /> Dividir
+        </button>
+        <button onClick={props.onDuplicate}>
+          <Icon name="duplicate" size={14} /> Duplicar
+        </button>
         <button className="danger" onClick={props.onDelete}>
-          Eliminar
+          <Icon name="trash" size={14} /> Eliminar
         </button>
       </div>
     </>
@@ -324,7 +339,7 @@ function AudioSettings({ item, project, set, onDelete }: { item: AudioItem; proj
       <Range label="Salida suave" min={0} max={5} step={0.1} value={item.fadeOut} display={`${item.fadeOut.toFixed(1)} s`} onChange={(v) => set((a) => ({ ...a, fadeOut: v }), `fo-${item.id}`)} />
       <div className="buttons">
         <button className="danger" onClick={onDelete}>
-          Quitar
+          <Icon name="trash" size={14} /> Quitar
         </button>
       </div>
     </>
@@ -370,8 +385,9 @@ function PositionPanel({ item, set, time, onSeek }: { item: VisualItem; set: Set
 
   return (
     <>
-      <p className="muted small">
-        ◆ anima una propiedad: pon el cursor en un momento, cambia el valor y se crea un keyframe ahí. También puedes arrastrar el elemento en la vista previa.
+      <p className="hint">
+        <Icon name="diamond" size={11} />
+        <span>Pulsa el rombo para animar: pon el cursor en un momento, cambia el valor y se crea un keyframe ahí. También puedes arrastrar el elemento en la vista previa.</span>
       </p>
       {PROPS.map(({ prop, label, min, max, step, show }) => {
         const kfs = item.keyframes[prop]
@@ -382,10 +398,10 @@ function PositionPanel({ item, set, time, onSeek }: { item: VisualItem; set: Set
       {allTimes.length > 0 && (
         <div className="kf-nav">
           <button disabled={prevKf === undefined} onClick={() => prevKf !== undefined && onSeek(item.start + prevKf)}>
-            ◀ Keyframe anterior
+            <Icon name="frameBack" size={13} /> Anterior
           </button>
           <button disabled={nextKf === undefined} onClick={() => nextKf !== undefined && onSeek(item.start + nextKf)}>
-            Siguiente ▶
+            Siguiente <Icon name="frameForward" size={13} />
           </button>
         </div>
       )}
@@ -426,6 +442,7 @@ function KeyframeList({ item, set }: { item: VisualItem; set: Set<VisualItem> })
               </select>
               <button
                 className="mini"
+                aria-label="Borrar keyframe"
                 title="Borrar"
                 onClick={() =>
                   set((it) => {
@@ -437,7 +454,7 @@ function KeyframeList({ item, set }: { item: VisualItem; set: Set<VisualItem> })
                   })
                 }
               >
-                ×
+                <Icon name="close" size={11} />
               </button>
             </div>
           ))}
@@ -511,7 +528,13 @@ function ColorPanel({ clip, set }: { clip: VideoClip; set: Set<VideoClip> }) {
 }
 
 function TransitionPanel({ clip, set, first }: { clip: VideoClip; set: Set<VideoClip>; first: boolean }) {
-  if (first) return <p className="muted small">El primer clip no tiene transición de entrada. Selecciona el clip siguiente para elegir cómo pasa de uno a otro.</p>
+  if (first)
+    return (
+      <p className="hint">
+        <Icon name="info" size={14} />
+        <span>El primer clip no tiene transición de entrada. Selecciona el clip siguiente para elegir cómo pasa de uno a otro.</span>
+      </p>
+    )
   return (
     <>
       <p className="muted small">Cómo se pasa del clip anterior a este.</p>
@@ -529,14 +552,22 @@ function TransitionPanel({ clip, set, first }: { clip: VideoClip; set: Set<Video
   )
 }
 
-function ProjectPanel({ project, update, onSetLogo }: Pick<Props, 'project' | 'update' | 'onSetLogo'>) {
+function ProjectPanel({ project, update, onSetLogo, onShortcuts }: Pick<Props, 'project' | 'update' | 'onSetLogo' | 'onShortcuts'>) {
   const [copied, setCopied] = useState(false)
   const brand = project.brand
   const setBrand = (patch: Partial<typeof brand>, key?: string) => update((p) => ({ ...p, brand: { ...p.brand, ...patch } }), key)
   const copyText = [project.copy.title, project.copy.caption, project.copy.hashtags.join(' ')].filter(Boolean).join('\n\n')
   return (
     <>
-      <h3>Proyecto</h3>
+      <div className="insp-head">
+        <span className="insp-icon project">
+          <Icon name="film" size={16} />
+        </span>
+        <div className="insp-title">
+          <h3>Proyecto</h3>
+          <p className="wrap">Selecciona algo en la línea de tiempo para editarlo.</p>
+        </div>
+      </div>
       <div className="field">
         <span>Formato</span>
         <div className="formats">
@@ -546,7 +577,10 @@ function ProjectPanel({ project, update, onSetLogo }: Pick<Props, 'project' | 'u
             return (
               <button key={f} className={project.format === f ? 'on' : ''} onClick={() => update((p) => ({ ...p, format: f }))} title={label}>
                 <i style={{ width: width * s, height: height * s }} />
-                <span>{label}</span>
+                <span>
+                  {label.replace(/ \(.*\)$/, '')}
+                  {label.includes('(') && <small>{label.replace(/^.*\((.*)\)$/, '$1')}</small>}
+                </span>
               </button>
             )
           })}
@@ -569,7 +603,9 @@ function ProjectPanel({ project, update, onSetLogo }: Pick<Props, 'project' | 'u
         <Color label="Principal" value={brand.primary} onChange={(v) => setBrand({ primary: v }, 'brand1')} />
         <Color label="Acento" value={brand.secondary} onChange={(v) => setBrand({ secondary: v }, 'brand2')} />
       </div>
-      <button onClick={onSetLogo}>{brand.logoMediaId ? 'Cambiar logo…' : 'Poner logo…'}</button>
+      <button onClick={onSetLogo}>
+        <Icon name="photo" size={14} /> {brand.logoMediaId ? 'Cambiar logo…' : 'Poner logo…'}
+      </button>
 
       <h4>Textos para publicar</h4>
       <label className="field">
@@ -597,30 +633,20 @@ function ProjectPanel({ project, update, onSetLogo }: Pick<Props, 'project' | 'u
           setTimeout(() => setCopied(false), 1500)
         }}
       >
-        {copied ? '¡Copiado!' : 'Copiar todo'}
+        <Icon name={copied ? 'check' : 'duplicate'} size={14} /> {copied ? 'Copiado' : 'Copiar todo'}
       </button>
 
-      <h4>Atajos</h4>
-      <ul className="shortcuts">
-        <li>
-          <kbd>Espacio</kbd> reproducir / pausar
-        </li>
-        <li>
-          <kbd>S</kbd> dividir en el cursor · <kbd>Supr</kbd> eliminar
-        </li>
-        <li>
-          <kbd>←</kbd> <kbd>→</kbd> un cuadro (con <kbd>⇧</kbd>, un segundo)
-        </li>
-        <li>
-          <kbd>{window.api.platform === 'darwin' ? '⌘' : 'Ctrl'} Z</kbd> deshacer · <kbd>{window.api.platform === 'darwin' ? '⌘' : 'Ctrl'} D</kbd> duplicar
-        </li>
-      </ul>
+      <h4>Ayuda</h4>
+      <button onClick={onShortcuts}>
+        <Icon name="keyboard" size={14} /> Atajos de teclado
+      </button>
     </>
   )
 }
 
 type Tab = 'settings' | 'anim' | 'position' | 'color' | 'transition'
 const TITLES: Record<Item['type'], string> = { video: 'Clip de video', image: 'Foto', text: 'Texto', shape: 'Forma', captions: 'Subtítulos', audio: 'Audio' }
+const TYPE_ICON: Record<Item['type'], IconName> = { video: 'film', image: 'photo', text: 'text', shape: 'shape', captions: 'captions', audio: 'music' }
 
 export function Inspector(props: Props) {
   const { project, sel, update, time } = props
@@ -645,22 +671,25 @@ export function Inspector(props: Props) {
   const set = <T extends Item>(fn: (it: T) => T, key?: string) => update((p) => mapItem<T>(p, item.id, fn), key)
   const isClip = item.type === 'video' || item.type === 'image'
   const tabs: [Tab, string][] = [['settings', 'Ajustes']]
-  if (item.type !== 'audio') tabs.push(['anim', 'Animación'], ['position', 'Posición'])
+  if (item.type !== 'audio') tabs.push(['anim', 'Animar'], ['position', 'Posición'])
   if (isClip) tabs.push(['color', 'Color'])
   if (isClip && track.kind === 'main') tabs.push(['transition', 'Transición'])
   const name = 'mediaId' in item ? findMedia(project, item.mediaId)?.name : undefined
 
   return (
     <aside className="inspector">
-      <h3>{TITLES[item.type]}</h3>
-      {name && (
-        <p className="file-name" title={name}>
-          {name}
-        </p>
-      )}
-      <p className="muted small">
-        {formatTime(item.start)} → {formatTime(item.start + item.duration)} · pista «{track.name}»
-      </p>
+      <div className="insp-head">
+        <span className={`insp-icon ${item.type}`}>
+          <Icon name={TYPE_ICON[item.type]} size={16} />
+        </span>
+        <div className="insp-title">
+          <h3>{TITLES[item.type]}</h3>
+          {name && <p title={name}>{name}</p>}
+          <p>
+            {formatTime(item.start)} – {formatTime(item.start + item.duration)} · {track.name}
+          </p>
+        </div>
+      </div>
       {item.type !== 'audio' && <Tabs tabs={tabs} value={tab} onChange={setTab} />}
       {item.type === 'audio' ? (
         <AudioSettings item={item} project={project} set={set as Set<AudioItem>} onDelete={props.onDelete} />
@@ -683,9 +712,11 @@ export function Inspector(props: Props) {
       ) : null}
       {!isClip && item.type !== 'audio' && (
         <div className="buttons">
-          <button onClick={props.onDuplicate}>Duplicar</button>
+          <button onClick={props.onDuplicate}>
+            <Icon name="duplicate" size={14} /> Duplicar
+          </button>
           <button className="danger" onClick={props.onDelete}>
-            Eliminar
+            <Icon name="trash" size={14} /> Eliminar
           </button>
         </div>
       )}

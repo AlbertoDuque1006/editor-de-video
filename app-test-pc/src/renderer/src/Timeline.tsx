@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Item, Project, Track, TrackKind, VideoClip, VisualItem } from '../../shared/types'
 import { clamp, findItem, findMedia, itemEnd, mapItem, MIN_DURATION, newTrack, totalDuration } from '../../shared/project'
-import { drag, formatTime, type Selection, type Update } from './util'
+import { Icon, type IconName } from './Icon'
+import { drag, formatTime, MOD, type Selection, type Update } from './util'
 
 interface Props {
   project: Project
@@ -16,8 +17,18 @@ interface Props {
   onDropMedia: (mediaId: string, trackId: string, time: number) => void
   onAddText: () => void
   onSplit: () => void
+  onDuplicate: () => void
   onDelete: () => void
+  /** Alto del panel: se cambia arrastrando el borde de arriba. */
+  height: number
+  onHeight: (h: number) => void
+  /** La app guarda aquí la función de «ajustar a la ventana» para llamarla desde el menú. */
+  fitRef: React.MutableRefObject<() => void>
 }
+
+const MIN_PPS = 8
+const MAX_PPS = 300
+const LANE_ICON: Record<TrackKind, IconName> = { main: 'film', overlay: 'layers', audio: 'waveform' }
 
 const ROW = 30
 const HEIGHTS: Record<TrackKind, number> = { main: 66, overlay: ROW, audio: 38 }
@@ -41,10 +52,10 @@ function tickStep(pps: number): number {
 
 function label(p: Project, it: Item): string {
   if (it.type === 'text') return it.text.split('\n')[0] || '(texto vacío)'
-  if (it.type === 'shape') return it.shape === 'circle' ? '● Círculo' : '■ Rectángulo'
+  if (it.type === 'shape') return it.shape === 'circle' ? 'Círculo' : 'Rectángulo'
   if (it.type === 'captions') return `Subtítulos · ${it.words.length} palabras`
   const name = findMedia(p, it.mediaId)?.name ?? 'Archivo no encontrado'
-  return it.type === 'audio' ? `♪ ${name}` : name
+  return name
 }
 
 /** Límite de duración por el archivo (las fotos, textos y formas no tienen límite). */
@@ -60,10 +71,66 @@ export function Timeline(props: Props) {
   const contentRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [reorder, setReorder] = useState<{ id: string; index: number } | null>(null)
+  const [dropLane, setDropLane] = useState<string | null>(null)
+  const propsRef = useRef(props)
+  propsRef.current = props
+  const ppsRef = useRef(pps)
+  ppsRef.current = pps
 
   const total = totalDuration(project)
   const width = Math.max(total + 8, 20) * pps
   const xToTime = (clientX: number) => Math.max(0, (clientX - contentRef.current!.getBoundingClientRect().left) / pps)
+
+  const fit = () => {
+    const s = scrollRef.current
+    if (s) onZoom(clamp((s.clientWidth - 48) / Math.max(total, 1), MIN_PPS, MAX_PPS))
+  }
+  props.fitRef.current = fit
+
+  // ⌘/Ctrl + rueda (o pellizcar en el trackpad) acerca y aleja la línea de tiempo en el punto del puntero.
+  useEffect(() => {
+    const s = scrollRef.current!
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      const old = ppsRef.current
+      const next = clamp(old * Math.exp(-e.deltaY * 0.01), MIN_PPS, MAX_PPS)
+      const x = e.clientX - s.getBoundingClientRect().left
+      const t = (s.scrollLeft + x) / old
+      propsRef.current.onZoom(next)
+      requestAnimationFrame(() => (s.scrollLeft = t * next - x))
+    }
+    s.addEventListener('wheel', onWheel, { passive: false })
+    return () => s.removeEventListener('wheel', onWheel)
+  }, [])
+
+  const startResize = (e: React.PointerEvent) => {
+    const h0 = props.height
+    drag(e, (_dx, dy) => props.onHeight(clamp(h0 - dy, 190, window.innerHeight - 320)))
+  }
+
+  const itemMenu = async (e: React.MouseEvent, it: Item) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onSelect(it.id)
+    const t = propsRef.current.time
+    const splittable = t > it.start + MIN_DURATION && t < itemEnd(it) - MIN_DURATION
+    const mod = window.api.platform === 'darwin' ? 'Cmd' : 'Ctrl'
+    const pick = await window.api.contextMenu([
+      { id: 'split', label: 'Dividir en el cursor', enabled: splittable },
+      { id: 'duplicate', label: 'Duplicar', accelerator: `${mod}+D` },
+      { type: 'separator' },
+      { id: 'start', label: 'Ir al inicio del elemento' },
+      { type: 'separator' },
+      { id: 'delete', label: 'Eliminar', accelerator: 'Backspace' }
+    ])
+    // Se usan las funciones del último render: ya incluyen la selección nueva.
+    const p = propsRef.current
+    if (pick === 'split') p.onSplit()
+    else if (pick === 'duplicate') p.onDuplicate()
+    else if (pick === 'start') p.onSeek(it.start)
+    else if (pick === 'delete') p.onDelete()
+  }
 
   // Durante la reproducción, la vista sigue al cursor.
   useEffect(() => {
@@ -74,7 +141,7 @@ export function Timeline(props: Props) {
   }, [time, playing, pps])
 
   const scrub = (e: React.PointerEvent) => {
-    if (e.target !== e.currentTarget) return
+    if (e.target !== e.currentTarget || e.button !== 0) return
     onSelect(null)
     onSeek(xToTime(e.clientX))
     drag(e, (_dx, _dy, ev) => onSeek(xToTime(ev.clientX)))
@@ -180,10 +247,13 @@ export function Timeline(props: Props) {
   }
 
   // --- Archivos arrastrados desde el panel ---
-  const onDragOver = (e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes('application/x-media-id')) e.preventDefault()
+  const onDragOver = (e: React.DragEvent, track: Track) => {
+    if (!e.dataTransfer.types.includes('application/x-media-id')) return
+    e.preventDefault()
+    if (dropLane !== track.id) setDropLane(track.id)
   }
   const onDrop = (e: React.DragEvent, track: Track) => {
+    setDropLane(null)
     const id = e.dataTransfer.getData('application/x-media-id')
     if (!id) return
     e.preventDefault()
@@ -228,48 +298,73 @@ export function Timeline(props: Props) {
 
   return (
     <section className="timeline">
+      <div className="tl-resizer" onPointerDown={startResize} title="Arrastra para cambiar el alto" />
       <div className="tl-toolbar">
-        <button onClick={props.onAddText}>+ Texto</button>
-        <button onClick={() => addTrack('overlay')} title="Una capa más para textos, fotos o videos encima">
-          + Capa
+        <button className="plain" onClick={props.onAddText} title="Agregar un texto en el cursor">
+          <Icon name="text" size={15} /> Texto
         </button>
-        <button onClick={() => addTrack('audio')}>+ Pista de audio</button>
+        <button className="plain" onClick={() => addTrack('overlay')} title="Una capa más para textos, fotos o videos encima">
+          <Icon name="layers" size={15} /> Capa
+        </button>
+        <button className="plain" onClick={() => addTrack('audio')} title="Una pista más de audio">
+          <Icon name="waveform" size={15} /> Audio
+        </button>
         <span className="sep" />
-        <button onClick={props.onSplit} disabled={!canSplit} title="Dividir lo seleccionado en el cursor (S)">
-          ✂ Dividir
+        <button className="plain" onClick={props.onSplit} disabled={!canSplit} title="Dividir lo seleccionado en el cursor (S)">
+          <Icon name="scissors" size={15} /> Dividir
         </button>
-        <button onClick={props.onDelete} disabled={!sel} title="Eliminar lo seleccionado (Supr)">
-          Eliminar
+        <button className="plain" onClick={props.onDuplicate} disabled={!sel} title={`Duplicar lo seleccionado (${MOD}D)`}>
+          <Icon name="duplicate" size={15} /> Duplicar
+        </button>
+        <button className="plain danger" onClick={props.onDelete} disabled={!sel} title="Eliminar lo seleccionado (Supr)">
+          <Icon name="trash" size={15} /> Eliminar
         </button>
         <span className="spacer" />
-        <span className="muted">Duración {formatTime(total)}</span>
-        <label className="zoom">
-          <span className="muted">Zoom</span>
-          <input type="range" min={8} max={300} value={pps} onChange={(e) => onZoom(Number(e.target.value))} />
-        </label>
+        <span className="tl-duration">Duración {formatTime(total)}</span>
+        <div className="zoom">
+          <button className="plain icon" title={`Alejar (${MOD}−)`} aria-label="Alejar" onClick={() => onZoom(clamp(pps / 1.4, MIN_PPS, MAX_PPS))}>
+            <Icon name="zoomOut" size={15} />
+          </button>
+          <input
+            type="range"
+            aria-label="Zoom de la línea de tiempo"
+            min={MIN_PPS}
+            max={MAX_PPS}
+            value={pps}
+            style={{ '--p': `${((pps - MIN_PPS) / (MAX_PPS - MIN_PPS)) * 100}%` } as React.CSSProperties}
+            onChange={(e) => onZoom(Number(e.target.value))}
+          />
+          <button className="plain icon" title={`Acercar (${MOD}+)`} aria-label="Acercar" onClick={() => onZoom(clamp(pps * 1.4, MIN_PPS, MAX_PPS))}>
+            <Icon name="zoomIn" size={15} />
+          </button>
+          <button className="plain icon" title={`Ajustar a la ventana (${MOD}0)`} aria-label="Ajustar a la ventana" onClick={fit} disabled={total === 0}>
+            <Icon name="fit" size={15} />
+          </button>
+        </div>
       </div>
       <div className="tl-body">
         <div className="tl-labels">
           <div className="ruler" />
           {layout.map(({ track, height }) => (
             <div key={track.id} className={`lane-label ${track.kind}`} style={{ height }}>
+              <Icon name={LANE_ICON[track.kind]} size={14} />
               <span className="lane-name" title={track.name}>
                 {track.name}
               </span>
               <span className="lane-tools">
                 {track.kind !== 'audio' && (
                   <button className={`mini ${track.hidden ? 'on' : ''}`} title={track.hidden ? 'Mostrar' : 'Ocultar'} onClick={() => toggle(track.id, 'hidden')}>
-                    {track.hidden ? '◌' : '◉'}
+                    <Icon name={track.hidden ? 'eyeOff' : 'eye'} size={14} />
                   </button>
                 )}
                 {track.kind !== 'overlay' || track.items.some((i) => i.type === 'video') ? (
                   <button className={`mini ${track.muted ? 'on' : ''}`} title={track.muted ? 'Activar sonido' : 'Silenciar'} onClick={() => toggle(track.id, 'muted')}>
-                    {track.muted ? '🔇' : '🔊'}
+                    <Icon name={track.muted ? 'speakerOff' : 'speaker'} size={14} />
                   </button>
                 ) : null}
                 {track.kind !== 'main' && track.items.length === 0 && (
-                  <button className="mini" title="Quitar pista" onClick={() => removeTrack(track.id)}>
-                    ×
+                  <button className="mini remove-track" title="Quitar pista" aria-label="Quitar pista" onClick={() => removeTrack(track.id)}>
+                    <Icon name="close" size={12} />
                   </button>
                 )}
               </span>
@@ -304,10 +399,11 @@ export function Timeline(props: Props) {
               return (
                 <div
                   key={track.id}
-                  className={`lane ${track.kind} ${track.hidden ? 'hidden' : ''}`}
+                  className={`lane ${track.kind} ${track.hidden ? 'hidden' : ''} ${dropLane === track.id ? 'drop-over' : ''}`}
                   style={{ height }}
                   onPointerDown={scrub}
-                  onDragOver={onDragOver}
+                  onDragOver={(e) => onDragOver(e, track)}
+                  onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setDropLane(null)}
                   onDrop={(e) => onDrop(e, track)}
                 >
                   {items.map((it, i) => {
@@ -328,15 +424,24 @@ export function Timeline(props: Props) {
                           height: h,
                           backgroundImage: m?.thumb && (it.type === 'video' || it.type === 'image') ? `url("${m.thumb}")` : undefined
                         }}
-                        onPointerDown={(e) => (isMain ? startReorder(e, track, it) : startMove(e, it))}
+                        onPointerDown={(e) => e.button === 0 && (isMain ? startReorder(e, track, it) : startMove(e, it))}
+                        onContextMenu={(e) => void itemMenu(e, it)}
                         title={label(project, it)}
                       >
                         <div className="handle left" onPointerDown={(e) => startTrim(e, track, it, 'left')} />
                         <span className="item-label">
-                          {(it.type === 'video' || it.type === 'image') && it.transition.type !== 'none' && isMain && i > 0 && <b className="tr-mark">⋈ </b>}
-                          {label(project, it)}
-                          {it.type === 'video' && it.speed !== 1 && <b> · {it.speed}×</b>}
-                          {visual && visual.anim.in.type !== 'none' && <b className="anim-mark"> ✦</b>}
+                          {(it.type === 'video' || it.type === 'image') && it.transition.type !== 'none' && isMain && i > 0 && (
+                            <b className="tr-mark" title="Tiene transición">
+                              ⋈
+                            </b>
+                          )}
+                          <span>{label(project, it)}</span>
+                          {it.type === 'video' && it.speed !== 1 && <b>{it.speed}×</b>}
+                          {visual && visual.anim.in.type !== 'none' && (
+                            <b className="anim-mark" title="Tiene animación">
+                              <Icon name="sparkles" size={11} />
+                            </b>
+                          )}
                         </span>
                         {kfTimes.map((t) => (
                           <span key={t} className="kf" style={{ left: t * pps - 4 }} />

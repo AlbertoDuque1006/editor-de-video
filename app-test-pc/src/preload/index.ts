@@ -16,6 +16,18 @@ export interface Settings {
   brand: Project['brand']
 }
 
+export interface ConfirmOptions {
+  message: string
+  detail?: string
+  confirm: string
+  cancel?: string
+  destructive?: boolean
+}
+
+export type CtxItem =
+  | { id: string; label: string; enabled?: boolean; checked?: boolean; accelerator?: string }
+  | { type: 'separator' }
+
 export type AiProgress = { kind: 'status'; text: string }
 export type TranscribeProgress = { stage: 'audio' | 'download' | 'working'; ratio?: number }
 export interface AiResult {
@@ -39,6 +51,9 @@ const api = {
     ipcRenderer.invoke('project:save', project, currentPath, saveAs),
   openProject: (): Promise<{ project: Project; path: string; missing: string[] } | null> => ipcRenderer.invoke('project:open'),
   setDirty: (dirty: boolean): void => ipcRenderer.send('project:dirty', dirty),
+  setRepresentedFile: (path: string | null): void => ipcRenderer.send('project:file', path),
+  confirm: (opts: ConfirmOptions): Promise<boolean> => ipcRenderer.invoke('dialog:confirm', opts),
+  contextMenu: (items: CtxItem[]): Promise<string | null> => ipcRenderer.invoke('menu:context', items),
 
   chooseExportPath: (defaultName: string): Promise<string | null> => ipcRenderer.invoke('export:choosePath', defaultName),
   exportBegin: (webm: boolean): Promise<string> => ipcRenderer.invoke('export:begin', webm),
@@ -60,6 +75,9 @@ const api = {
   onAiProgress: (cb: (conversationId: string, p: AiProgress) => void): Off => on('ai:progress', cb),
   transcribe: (m: MediaItem): Promise<Word[]> => ipcRenderer.invoke('ai:transcribe', m),
   onTranscribeProgress: (cb: (mediaId: string, p: TranscribeProgress) => void): Off => on('ai:transcribeProgress', cb),
+
+  accentColor: (): Promise<string | null> => ipcRenderer.invoke('system:accent'),
+  onFullscreen: (cb: (on: boolean) => void): Off => on('window:fullscreen', cb),
 
   onMenu: (cb: (cmd: string) => void): Off => on('menu', cb)
 }
