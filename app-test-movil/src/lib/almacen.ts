@@ -10,6 +10,14 @@ const raiz = () => new Directory(Paths.document, 'proyectos');
 
 export const carpetaDe = (id: string) => new Directory(raiz(), id);
 
+/** Foto de portada del proyecto (la primera imagen del video). */
+export const PORTADA = 'portada.jpg';
+
+export const portadaDe = (id: string): string | null => {
+  const f = new File(carpetaDe(id), PORTADA);
+  return f.exists ? f.uri : null;
+};
+
 export const uriDe = (proyectoId: string, archivo: string) => new File(carpetaDe(proyectoId), archivo).uri;
 
 let cola: Promise<void> = Promise.resolve();
@@ -69,4 +77,16 @@ export async function copiarAlProyecto(proyectoId: string, uriOrigen: string, no
   const carpeta = carpetaDe(proyectoId);
   carpeta.create({ intermediates: true, idempotent: true });
   await new File(uriOrigen).copy(new File(carpeta, nombre), { overwrite: true });
+}
+
+/** Copia el proyecto completo (clips incluidos) con otro id y otro nombre. Devuelve el id nuevo. */
+export async function duplicarProyecto(p: Proyecto, id: string, nombre: string): Promise<string> {
+  const origen = carpetaDe(p.id);
+  const destino = carpetaDe(id);
+  destino.create({ intermediates: true, idempotent: true });
+  for (const item of origen.list()) {
+    if (item instanceof File && !item.name.startsWith('proyecto.json')) await item.copy(new File(destino, item.name), { overwrite: true });
+  }
+  await guardarProyecto({ ...p, id, nombre, creado: Date.now(), editado: Date.now() });
+  return id;
 }

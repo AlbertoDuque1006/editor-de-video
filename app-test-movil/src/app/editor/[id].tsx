@@ -1,44 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Keyboard,
-  KeyboardAvoidingView,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-  useWindowDimensions,
-  type ScrollViewInstance,
-} from 'react-native';
+import { ActionSheetIOS, Alert, Animated, Keyboard, KeyboardAvoidingView, Modal, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Clipboard from 'expo-clipboard';
-import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import * as Sharing from 'expo-sharing';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import { Icono, sf } from '@/componentes/Icono';
+import { Linea, useTiempo } from '@/componentes/Linea';
+import { PanelCortes, PanelIA, PanelMas, PanelTextos, type Cambiar } from '@/componentes/paneles';
+import { letra, tema } from '@/componentes/tema';
+import { Boton, BotonIcono, Segmentado, tacto } from '@/componentes/ui';
 import { Vista, type VistaRef } from '@/componentes/Vista';
-import { Boton, Chip, Etiqueta, Fila, Mini } from '@/componentes/ui';
-import { copiarAlProyecto, guardarProyecto, leerProyecto } from '@/lib/almacen';
-import { COLORES, tema } from '@/lib/estilos';
+import { copiarAlProyecto, guardarProyecto, leerProyecto, uriDe } from '@/lib/almacen';
 import { ErrorIA, pedirCambio } from '@/lib/ia';
+import { guardarPortada, medirVideo } from '@/lib/medios';
+import { insertarTramo, tramoEn } from '@/lib/montaje';
 import { AVISO_EXPO_GO, exportar, hayNativo, transcribirClip } from '@/lib/nativo';
-import { FORMATOS, TRAMO_MINIMO, aplicarPlan, duracionTotal, formatoTiempo, nuevoId } from '@/lib/proyecto';
-import type { Animacion, Estilo, Formato, Posicion, Proyecto, Texto, Tramo } from '@/lib/tipos';
+import { aplicarPlan, duracionTotal, formatoTiempo, nuevoId } from '@/lib/proyecto';
+import type { Clip, Proyecto } from '@/lib/tipos';
 
 type Pestana = 'ia' | 'cortes' | 'textos' | 'mas';
-
-const ATAJOS = [
-  'Hazlo más corto y dinámico',
-  'Pon un título con gancho al inicio',
-  'Agrega subtítulos',
-  'Quita los silencios y las muletillas',
-  'Agrega un llamado a la acción al final',
-  'Escribe el texto para publicar',
-];
+const PESTANAS = [
+  ['ia', 'IA'],
+  ['cortes', 'Cortes'],
+  ['textos', 'Textos'],
+  ['mas', 'Más'],
+] as const satisfies readonly (readonly [Pestana, string])[];
 
 export default function Editor() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -46,8 +33,12 @@ export default function Editor() {
   // Copia al día del proyecto: varios cambios seguidos (antes y después de esperar a la IA) se encadenan bien.
   const actual = useRef(p);
   const historial = useRef<Proyecto[]>([]);
+  const rehechos = useRef<Proyecto[]>([]);
   const [pestana, setPestana] = useState<Pestana>('ia');
   const [teclado, setTeclado] = useState(false);
+  const [zonaSegura, setZonaSegura] = useState(false);
+  const [tocando, setTocando] = useState(false);
+  const [textoElegido, setTextoElegido] = useState<string | null>(null);
   const vista = useRef<VistaRef>(null);
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -61,24 +52,169 @@ export default function Editor() {
     };
   }, []);
 
-  /** Todo cambio pasa por aquí: se guarda en disco y se puede deshacer. */
-  const cambiar = useCallback((f: (actual: Proyecto) => Proyecto) => {
-    const antes = actual.current;
-    if (!antes) return;
-    const nuevo = { ...f(antes), editado: Date.now() };
-    historial.current.push(antes);
-    if (historial.current.length > 50) historial.current.shift();
+  // Aviso corto arriba del video, en vez de una alerta que interrumpe.
+  const [mensaje, setMensaje] = useState<string | null>(null);
+  const opacidad = useRef(new Animated.Value(0)).current;
+  const reloj = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const avisar = useCallback(
+    (m: string) => {
+      if (!m) return;
+      setMensaje(m);
+      Animated.timing(opacidad, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+      if (reloj.current) clearTimeout(reloj.current);
+      reloj.current = setTimeout(() => Animated.timing(opacidad, { toValue: 0, duration: 250, useNativeDriver: true }).start(() => setMensaje(null)), 2200);
+    },
+    [opacidad],
+  );
+
+  const poner = (nuevo: Proyecto) => {
     actual.current = nuevo;
     setP(nuevo);
     guardarProyecto(nuevo);
+  };
+
+  /** Todo cambio pasa por aquí: se guarda en disco y se puede deshacer. */
+  const cambiar: Cambiar = useCallback((f) => {
+    const antes = actual.current;
+    if (!antes) return null;
+    const r = f(antes);
+    if (!r) return null;
+    const nuevo = { ...r, editado: Date.now() };
+    historial.current.push(antes);
+    if (historial.current.length > 50) historial.current.shift();
+    rehechos.current = [];
+    poner(nuevo);
+    return nuevo;
   }, []);
 
   const deshacer = () => {
     const anterior = historial.current.pop();
-    if (!anterior) return;
-    actual.current = anterior;
-    setP(anterior);
-    guardarProyecto(anterior);
+    if (!anterior || !actual.current) return;
+    rehechos.current.push(actual.current);
+    poner(anterior);
+    tacto.toque();
+  };
+  const rehacer = () => {
+    const siguiente = rehechos.current.pop();
+    if (!siguiente || !actual.current) return;
+    historial.current.push(actual.current);
+    poner(siguiente);
+    tacto.toque();
+  };
+
+  // La portada de la lista de videos es la primera imagen del montaje.
+  const primero = p?.tramos[0];
+  useEffect(() => {
+    if (!p || !primero) return;
+    const c = p.clips.find((x) => x.id === primero.clipId);
+    if (!c) return;
+    const t = setTimeout(() => void guardarPortada(p.id, uriDe(p.id, c.archivo), primero.inicio + 0.3).catch(() => {}), 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primero?.clipId, primero?.inicio]);
+
+  // IA
+  const [pensando, setPensando] = useState(false);
+  const pedirIA = async (pedido: string) => {
+    const q = pedido.trim();
+    if (!q || pensando || !actual.current) return;
+    Keyboard.dismiss();
+    setPestana('ia');
+    vista.current?.pausar();
+    const conPedido = cambiar((a) => ({ ...a, chat: [...a.chat, { de: 'yo', texto: q }] }));
+    if (!conPedido) return;
+    setPensando(true);
+    try {
+      const plan = await pedirCambio(conPedido, q);
+      cambiar((a) => ({ ...aplicarPlan(a, plan), chat: [...a.chat, { de: 'ia', texto: plan.mensaje }] }));
+      tacto.exito();
+    } catch (e) {
+      const msg = e instanceof ErrorIA || e instanceof Error ? e.message : String(e);
+      cambiar((a) => ({ ...a, chat: [...a.chat, { de: 'ia', texto: `No pude hacer el cambio: ${msg}` }] }));
+      tacto.aviso();
+    } finally {
+      setPensando(false);
+    }
+  };
+
+  const [transcribiendo, setTranscribiendo] = useState(false);
+  const transcribir = async () => {
+    const pendientes = actual.current?.clips.filter((c) => c.transcripcion === null) ?? [];
+    setTranscribiendo(true);
+    try {
+      const resultados = await Promise.all(pendientes.map(async (c) => [c.id, await transcribirClip(id, c).catch(() => null)] as const));
+      const mapa = new Map(resultados);
+      cambiar((a) => ({ ...a, clips: a.clips.map((c) => (mapa.has(c.id) ? { ...c, transcripcion: mapa.get(c.id) ?? null } : c)) }));
+    } finally {
+      setTranscribiendo(false);
+    }
+  };
+
+  // Agregar un clip después del que está bajo el cursor: uno que ya está en el proyecto o uno nuevo de la galería.
+  const ponerTramos = (clips: Clip[], extra: Clip[] = []) =>
+    cambiar((a) => {
+      const total = duracionTotal(a);
+      let r: Proyecto = { ...a, clips: [...a.clips, ...extra] };
+      let donde = tramoEn(a, Math.min(vista.current?.tiempo() ?? total, total - 0.001)) + 1;
+      if (donde <= 0) donde = a.tramos.length;
+      for (const c of clips) r = insertarTramo(r, donde++, { id: nuevoId(), clipId: c.id, inicio: 0, fin: c.duracion });
+      return r;
+    });
+
+  const desdeGaleria = async () => {
+    await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['videos'], allowsMultipleSelection: true, selectionLimit: 10, orderedSelection: true });
+    if (r.canceled || !actual.current) return;
+    avisar('Agregando…');
+    const nuevos: Clip[] = [];
+    let fallo: unknown = null;
+    for (const v of r.assets) {
+      try {
+        const n = (actual.current?.clips.length ?? 0) + nuevos.length + 1;
+        const ext = (v.fileName ?? v.uri).split('?')[0].split('.').pop()?.toLowerCase() || 'mov';
+        const archivo = `clip-${n}-${nuevoId().slice(-4)}.${ext}`;
+        await copiarAlProyecto(id, v.uri, archivo);
+        let dur = v.duration ? v.duration / 1000 : 0;
+        let { width: ancho, height: alto } = v;
+        if (!dur || !ancho) {
+          const m = await medirVideo(uriDe(id, archivo));
+          dur = m.duracion;
+          ancho = m.ancho;
+          alto = m.alto;
+        }
+        const clip: Clip = { id: nuevoId(), archivo, nombre: v.fileName ?? `Clip ${n}`, duracion: dur, ancho, alto, transcripcion: null, descripcion: '' };
+        if (hayNativo) clip.transcripcion = await transcribirClip(id, clip).catch(() => null);
+        nuevos.push(clip);
+      } catch (e) {
+        fallo = e;
+      }
+    }
+    // Los que sí se copiaron entran al video aunque otro haya fallado.
+    if (nuevos.length) ponerTramos(nuevos, nuevos);
+    if (fallo) {
+      tacto.aviso();
+      Alert.alert(
+        nuevos.length ? `Se agregaron ${nuevos.length} de ${r.assets.length} clips` : 'No se pudo agregar el clip',
+        fallo instanceof Error ? fallo.message : String(fallo),
+      );
+    } else {
+      tacto.exito();
+      avisar(nuevos.length === 1 ? 'Clip agregado' : `${nuevos.length} clips agregados`);
+    }
+  };
+
+  const agregarClip = () => {
+    const a = actual.current;
+    if (!a) return;
+    vista.current?.pausar();
+    const opciones = ['Elegir de la galería…', ...a.clips.map((c, i) => `Clip ${i + 1} completo (${formatoTiempo(c.duracion)})`), 'Cancelar'];
+    ActionSheetIOS.showActionSheetWithOptions(
+      { title: 'Agregar después del clip marcado', options: opciones, cancelButtonIndex: opciones.length - 1 },
+      (i) => {
+        if (i === 0) desdeGaleria().catch((e) => Alert.alert('No se pudo abrir la galería', e instanceof Error ? e.message : String(e)));
+        else if (i > 0 && i < opciones.length - 1) ponerTramos([a.clips[i - 1]]);
+      },
+    );
   };
 
   // Exportar
@@ -93,7 +229,9 @@ export default function Editor() {
     try {
       const uri = await exportar(p, setProgreso);
       setExportado(uri);
+      tacto.exito();
     } catch (e) {
+      tacto.aviso();
       Alert.alert('No se pudo exportar', e instanceof Error ? e.message : String(e));
     } finally {
       deactivateKeepAwake();
@@ -103,67 +241,114 @@ export default function Editor() {
 
   if (!p) return <Text style={{ color: tema.texto, padding: 20 }}>No encontré este video.</Text>;
 
-  const altoVista = teclado ? 150 : Math.min(height * 0.42, 420);
+  const altoVista = teclado ? 140 : Math.max(180, Math.min(height * 0.36, 380));
+  const panel = { p, cambiar, vista, avisar };
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: tema.fondo }} behavior="padding" keyboardVerticalOffset={insets.top + 44}>
-      <Stack.Screen
-        options={{
-          title: p.nombre,
-          headerRight: () => (
-            <Fila estilo={{ flexWrap: 'nowrap' }}>
-              <Pressable onPress={deshacer} hitSlop={8} disabled={historial.current.length === 0}>
-                <Text style={[s.accion, historial.current.length === 0 && { opacity: 0.35 }]}>Deshacer</Text>
-              </Pressable>
-              <Pressable onPress={exportarVideo} hitSlop={8}>
-                <Text style={[s.accion, { color: tema.acento, fontWeight: '800' }]}>Exportar</Text>
-              </Pressable>
-            </Fila>
-          ),
-        }}
-      />
+      <Stack.Screen options={{ title: p.nombre }} />
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Button icon={sf('deshacer')} accessibilityLabel="Deshacer" disabled={historial.current.length === 0} onPress={deshacer} />
+        <Stack.Toolbar.Button icon={sf('rehacer')} accessibilityLabel="Rehacer" disabled={rehechos.current.length === 0} onPress={rehacer} />
+        <Stack.Toolbar.Menu icon={sf('mas3')} accessibilityLabel="Más opciones">
+          <Stack.Toolbar.MenuAction icon={sf('zonaSegura')} isOn={zonaSegura} onPress={() => setZonaSegura((z) => !z)}>
+            Zona segura de Reels y TikTok
+          </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction icon={sf('galeria')} onPress={agregarClip}>
+            Agregar un clip
+          </Stack.Toolbar.MenuAction>
+        </Stack.Toolbar.Menu>
+        <Stack.Toolbar.Button variant="prominent" accessibilityLabel="Exportar" onPress={exportarVideo}>
+          Exportar
+        </Stack.Toolbar.Button>
+      </Stack.Toolbar>
 
-      <View style={{ paddingTop: 8 }}>
-        <Vista ref={vista} proyecto={p} ancho={width - 32} altoMaximo={altoVista} />
+      <View style={{ paddingTop: 4 }}>
+        <Vista ref={vista} proyecto={p} ancho={width - 32} altoMaximo={altoVista} zonaSegura={zonaSegura} onReproduciendo={setTocando} />
+        {mensaje && (
+          <Animated.View pointerEvents="none" style={[s.hud, { opacity: opacidad }]}>
+            <Text style={[letra.subtitulo, { color: '#FFFFFF', fontWeight: '600' }]}>{mensaje}</Text>
+          </Animated.View>
+        )}
       </View>
+
+      {!teclado && (
+        <>
+          <View style={s.transporte}>
+            <Reloj vista={vista} total={duracionTotal(p)} />
+            <BotonIcono icono="alInicio" etiqueta="Ir al inicio" tamano={40} fondo="transparent" onPress={() => vista.current?.buscar(0)} />
+            <BotonIcono
+              icono={tocando ? 'pausa' : 'play'}
+              etiqueta={tocando ? 'Pausar' : 'Reproducir'}
+              tamano={48}
+              fondo={tema.gris}
+              onPress={() => vista.current?.alternar()}
+            />
+            <View style={{ width: 40 }} />
+            <View style={s.derecha}>
+              <BotonIcono
+                icono="zonaSegura"
+                etiqueta="Zona segura de Reels y TikTok"
+                tamano={36}
+                activo={zonaSegura}
+                fondo={zonaSegura ? tema.acento : 'transparent'}
+                onPress={() => {
+                  setZonaSegura((z) => !z);
+                  avisar(zonaSegura ? 'Zona segura oculta' : 'Lo que queda fuera del recuadro lo tapan los botones de Reels y TikTok');
+                }}
+              />
+            </View>
+          </View>
+          <Linea
+            p={p}
+            vista={vista}
+            ancho={width}
+            textoElegido={textoElegido}
+            onElegirTexto={(tid) => {
+              setTextoElegido(tid);
+              setPestana('textos');
+              const x = p.textos.find((y) => y.id === tid);
+              if (x) vista.current?.buscar(x.inicio + 0.4);
+            }}
+            onAgregar={agregarClip}
+          />
+        </>
+      )}
 
       <View style={s.pestanas}>
-        {(
-          [
-            ['ia', 'IA'],
-            ['cortes', 'Cortes'],
-            ['textos', 'Textos'],
-            ['mas', 'Más'],
-          ] as [Pestana, string][]
-        ).map(([k, t]) => (
-          <Pressable key={k} onPress={() => setPestana(k)} style={[s.pestana, pestana === k && s.pestanaActiva]}>
-            <Text style={[s.pestanaTexto, pestana === k && { color: tema.texto }]}>{t}</Text>
-          </Pressable>
-        ))}
+        <Segmentado opciones={PESTANAS} valor={pestana} onCambio={setPestana} />
       </View>
 
-      {pestana === 'ia' && <PanelIA p={p} cambiar={cambiar} />}
-      {pestana === 'cortes' && <PanelCortes p={p} cambiar={cambiar} />}
-      {pestana === 'textos' && <PanelTextos p={p} cambiar={cambiar} />}
-      {pestana === 'mas' && <PanelMas p={p} cambiar={cambiar} />}
+      {pestana === 'ia' && <PanelIA p={p} pensando={pensando} pedirIA={pedirIA} transcribiendo={transcribiendo} onTranscribir={transcribir} />}
+      {pestana === 'cortes' && <PanelCortes {...panel} onAgregar={agregarClip} />}
+      {pestana === 'textos' && <PanelTextos {...panel} elegido={textoElegido} onElegir={setTextoElegido} />}
+      {pestana === 'mas' && <PanelMas {...panel} pedirIA={pedirIA} pensando={pensando} />}
 
       <Modal visible={progreso !== null || exportado !== null} transparent animationType="fade">
         <View style={s.modalFondo}>
           <View style={s.modal}>
             {exportado ? (
               <>
-                <Text style={s.modalTitulo}>¡Listo!</Text>
-                <Text style={s.nota}>El video quedó guardado en tus Fotos.</Text>
-                <Boton titulo="Compartir" onPress={() => Sharing.shareAsync(exportado, { mimeType: 'video/mp4', UTI: 'public.mpeg-4' })} estilo={{ marginTop: 16 }} />
-                <Boton titulo="Cerrar" tipo="secundario" onPress={() => setExportado(null)} estilo={{ marginTop: 10 }} />
+                <Icono nombre="checkCirculo" tamano={52} color={tema.ok} />
+                <Text style={[letra.titulo3, { color: tema.texto }]}>Listo</Text>
+                <Text style={[letra.subtitulo, { color: tema.suave, textAlign: 'center' }]}>El video quedó guardado en tus Fotos.</Text>
+                <Boton
+                  titulo="Compartir"
+                  icono="compartir"
+                  onPress={() => Sharing.shareAsync(exportado, { mimeType: 'video/mp4', UTI: 'public.mpeg-4' })}
+                  estilo={{ alignSelf: 'stretch', marginTop: 8 }}
+                />
+                <Boton titulo="Cerrar" tipo="plano" onPress={() => setExportado(null)} estilo={{ alignSelf: 'stretch' }} />
               </>
             ) : (
               <>
-                <Text style={s.modalTitulo}>Exportando…</Text>
+                <Text style={[letra.titulo3, { color: tema.texto }]}>Exportando…</Text>
                 <View style={s.progresoBarra}>
                   <View style={[s.progresoRelleno, { width: `${Math.round((progreso ?? 0) * 100)}%` }]} />
                 </View>
-                <Text style={s.nota}>{Math.round((progreso ?? 0) * 100)} % · No cierres la app.</Text>
+                <Text style={[letra.nota, { color: tema.suave, fontVariant: ['tabular-nums'] }]}>
+                  {Math.round((progreso ?? 0) * 100)} % · No cierres la app
+                </Text>
               </>
             )}
           </View>
@@ -173,340 +358,34 @@ export default function Editor() {
   );
 }
 
-type Panel = { p: Proyecto; cambiar: (f: (actual: Proyecto) => Proyecto) => void };
-
-function PanelIA({ p, cambiar }: Panel) {
-  const [texto, setTexto] = useState('');
-  const [pensando, setPensando] = useState(false);
-  const [transcribiendo, setTranscribiendo] = useState(false);
-  const lista = useRef<ScrollViewInstance>(null);
-  const sinTranscribir = p.clips.filter((c) => c.transcripcion === null);
-
-  const enviar = async (pedido: string) => {
-    const q = pedido.trim();
-    if (!q || pensando) return;
-    setTexto('');
-    Keyboard.dismiss();
-    const conPedido: Proyecto = { ...p, chat: [...p.chat, { de: 'yo', texto: q }] };
-    cambiar(() => conPedido);
-    setPensando(true);
-    try {
-      const plan = await pedirCambio(conPedido, q);
-      cambiar((actual) => ({ ...aplicarPlan(actual, plan), chat: [...actual.chat, { de: 'ia', texto: plan.mensaje }] }));
-    } catch (e) {
-      const msg = e instanceof ErrorIA || e instanceof Error ? e.message : String(e);
-      cambiar((actual) => ({ ...actual, chat: [...actual.chat, { de: 'ia', texto: `⚠️ ${msg}` }] }));
-    } finally {
-      setPensando(false);
-    }
-  };
-
-  const transcribir = async () => {
-    setTranscribiendo(true);
-    try {
-      const resultados = await Promise.all(sinTranscribir.map(async (c) => [c.id, await transcribirClip(p.id, c).catch(() => null)] as const));
-      const mapa = new Map(resultados);
-      cambiar((actual) => ({ ...actual, clips: actual.clips.map((c) => (mapa.has(c.id) ? { ...c, transcripcion: mapa.get(c.id) ?? null } : c)) }));
-    } finally {
-      setTranscribiendo(false);
-    }
-  };
-
+/** El tiempo del cursor, que se redibuja solo (no toda la pantalla). */
+function Reloj({ vista, total }: { vista: React.RefObject<VistaRef | null>; total: number }) {
+  const t = useTiempo(vista, (x) => Math.floor(x * 10) / 10);
   return (
-    <View style={{ flex: 1 }}>
-      <ScrollView ref={lista} style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 8 }} onContentSizeChange={() => lista.current?.scrollToEnd()}>
-        {p.chat.length === 0 && <Text style={s.nota}>Pídele a Claude cambios con tus palabras: qué quitar, qué textos poner, el ritmo…</Text>}
-        {p.chat.map((m, i) => (
-          <View key={i} style={[s.burbuja, m.de === 'yo' ? s.burbujaYo : s.burbujaIA]}>
-            <Text style={s.burbujaTexto}>{m.texto}</Text>
-          </View>
-        ))}
-        {pensando && (
-          <Fila>
-            <ActivityIndicator color={tema.suave} />
-            <Text style={s.nota}>Claude está editando…</Text>
-          </Fila>
-        )}
-        {hayNativo && sinTranscribir.length > 0 && (
-          <Boton titulo={`Escuchar lo que se dice (${sinTranscribir.length} clips)`} tipo="secundario" cargando={transcribiendo} onPress={transcribir} />
-        )}
-      </ScrollView>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }} style={{ flexGrow: 0 }}>
-        {ATAJOS.map((a) => (
-          <Chip key={a} texto={a} activo={false} onPress={() => enviar(a)} />
-        ))}
-      </ScrollView>
-      <View style={s.entrada}>
-        <TextInput
-          value={texto}
-          onChangeText={setTexto}
-          placeholder="Ej: quita el clip 2 y pon el precio en grande"
-          placeholderTextColor={tema.suave}
-          style={[s.input, { flex: 1 }]}
-          multiline
-          editable={!pensando}
-        />
-        <Boton titulo="Enviar" onPress={() => enviar(texto)} deshabilitado={!texto.trim() || pensando} estilo={{ paddingVertical: 12 }} />
-      </View>
+    <View style={s.reloj}>
+      <Text style={[letra.subtitulo, { color: tema.texto, fontVariant: ['tabular-nums'], fontWeight: '600' }]}>{formatoTiempo(t)}</Text>
+      <Text style={[letra.leyenda, { color: tema.suave, fontVariant: ['tabular-nums'] }]}>de {formatoTiempo(total)}</Text>
     </View>
   );
 }
 
-function PanelCortes({ p, cambiar }: Panel) {
-  const clips = new Map(p.clips.map((c, i) => [c.id, { c, n: i + 1 }]));
-  const editar = (i: number, f: (t: Tramo) => Tramo) =>
-    cambiar((a) => ({
-      ...a,
-      tramos: a.tramos.map((t, j) => {
-        if (j !== i) return t;
-        const n = f(t);
-        const dur = clips.get(t.clipId)?.c.duracion ?? t.fin;
-        const inicio = Math.max(0, Math.min(n.inicio, n.fin - TRAMO_MINIMO));
-        const fin = Math.min(dur, Math.max(n.fin, inicio + TRAMO_MINIMO));
-        return { ...n, inicio, fin };
-      }),
-    }));
-  const mover = (i: number, d: number) =>
-    cambiar((a) => {
-      const tramos = [...a.tramos];
-      const [t] = tramos.splice(i, 1);
-      tramos.splice(i + d, 0, t);
-      return { ...a, tramos };
-    });
-  const quitar = (i: number) => cambiar((a) => (a.tramos.length > 1 ? { ...a, tramos: a.tramos.filter((_, j) => j !== i) } : a));
-
-  return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: 40 }}>
-      {p.tramos.map((t, i) => {
-        const info = clips.get(t.clipId);
-        return (
-          <View key={t.id} style={s.tarjeta}>
-            <Text style={s.tarjetaTitulo} numberOfLines={1}>
-              {i + 1}. Clip {info?.n} · {formatoTiempo(t.inicio)} → {formatoTiempo(t.fin)} ({(t.fin - t.inicio).toFixed(1)} s)
-            </Text>
-            {info?.c.descripcion ? <Text style={s.nota} numberOfLines={1}>{info.c.descripcion}</Text> : null}
-            <Fila estilo={{ marginTop: 8 }}>
-              <Text style={s.mini}>Inicio</Text>
-              <Mini texto="−" onPress={() => editar(i, (x) => ({ ...x, inicio: x.inicio - 0.25 }))} />
-              <Mini texto="+" onPress={() => editar(i, (x) => ({ ...x, inicio: x.inicio + 0.25 }))} />
-              <Text style={[s.mini, { marginLeft: 8 }]}>Fin</Text>
-              <Mini texto="−" onPress={() => editar(i, (x) => ({ ...x, fin: x.fin - 0.25 }))} />
-              <Mini texto="+" onPress={() => editar(i, (x) => ({ ...x, fin: x.fin + 0.25 }))} />
-              <View style={{ flex: 1 }} />
-              <Mini texto="↑" onPress={() => mover(i, -1)} deshabilitado={i === 0} />
-              <Mini texto="↓" onPress={() => mover(i, 1)} deshabilitado={i === p.tramos.length - 1} />
-              <Mini texto="✕" onPress={() => quitar(i)} deshabilitado={p.tramos.length === 1} />
-            </Fila>
-          </View>
-        );
-      })}
-      <Etiqueta>Agregar un clip completo al final</Etiqueta>
-      <Fila>
-        {p.clips.map((c, i) => (
-          <Chip
-            key={c.id}
-            texto={`Clip ${i + 1} (${formatoTiempo(c.duracion)})`}
-            activo={false}
-            onPress={() => cambiar((a) => ({ ...a, tramos: [...a.tramos, { id: nuevoId(), clipId: c.id, inicio: 0, fin: c.duracion }] }))}
-          />
-        ))}
-      </Fila>
-    </ScrollView>
-  );
-}
-
-const POSICIONES: Posicion[] = ['arriba', 'centro', 'abajo'];
-const ESTILOS: [Estilo, string][] = [
-  ['titulo', 'Título'],
-  ['subtitulo', 'Subtítulo'],
-  ['etiqueta', 'Etiqueta'],
-];
-const ANIMACIONES: Animacion[] = ['aparecer', 'subir', 'zoom', 'rebote'];
-
-function PanelTextos({ p, cambiar }: Panel) {
-  const total = duracionTotal(p);
-  const editar = (id: string, cambios: Partial<Texto>) =>
-    cambiar((a) => ({ ...a, textos: a.textos.map((t) => (t.id === id ? { ...t, ...cambios } : t)) }));
-  const tiempo = (t: Texto, campo: 'inicio' | 'fin', d: number) => {
-    const v = Math.max(0, Math.min(total, t[campo] + d));
-    if (campo === 'inicio' && v > t.fin - TRAMO_MINIMO) return;
-    if (campo === 'fin' && v < t.inicio + TRAMO_MINIMO) return;
-    editar(t.id, { [campo]: v });
-  };
-  const agregar = () =>
-    cambiar((a) => ({
-      ...a,
-      textos: [
-        ...a.textos,
-        { id: nuevoId(), texto: 'Tu texto', inicio: 0, fin: Math.min(3, total), posicion: 'centro', estilo: 'titulo', animacion: 'zoom', color: '#FFFFFF' },
-      ],
-    }));
-
-  return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-      <Boton titulo="+ Agregar texto" tipo="secundario" onPress={agregar} />
-      {p.textos.map((t) => (
-        <View key={t.id} style={s.tarjeta}>
-          <TextInput
-            key={t.texto}
-            defaultValue={t.texto}
-            onEndEditing={(e) => e.nativeEvent.text.trim() && editar(t.id, { texto: e.nativeEvent.text.trim() })}
-            style={[s.input, { fontWeight: '700' }]}
-            multiline
-          />
-          <Fila estilo={{ marginTop: 8 }}>
-            <Text style={s.mini}>
-              {formatoTiempo(t.inicio)} → {formatoTiempo(t.fin)}
-            </Text>
-            <Mini texto="◀" onPress={() => tiempo(t, 'inicio', -0.25)} />
-            <Mini texto="▶" onPress={() => tiempo(t, 'inicio', 0.25)} />
-            <Text style={s.mini}>fin</Text>
-            <Mini texto="◀" onPress={() => tiempo(t, 'fin', -0.25)} />
-            <Mini texto="▶" onPress={() => tiempo(t, 'fin', 0.25)} />
-            <View style={{ flex: 1 }} />
-            <Mini texto="✕" onPress={() => cambiar((a) => ({ ...a, textos: a.textos.filter((x) => x.id !== t.id) }))} />
-          </Fila>
-          <Fila estilo={{ marginTop: 8 }}>
-            {ESTILOS.map(([e, n]) => (
-              <Chip key={e} texto={n} activo={t.estilo === e} onPress={() => editar(t.id, { estilo: e })} />
-            ))}
-          </Fila>
-          <Fila estilo={{ marginTop: 8 }}>
-            {POSICIONES.map((x) => (
-              <Chip key={x} texto={x} activo={t.posicion === x} onPress={() => editar(t.id, { posicion: x })} />
-            ))}
-          </Fila>
-          <Fila estilo={{ marginTop: 8 }}>
-            {ANIMACIONES.map((x) => (
-              <Chip key={x} texto={x} activo={t.animacion === x} onPress={() => editar(t.id, { animacion: x })} />
-            ))}
-          </Fila>
-          <Fila estilo={{ marginTop: 10 }}>
-            {COLORES.map((c) => (
-              <Pressable
-                key={c}
-                onPress={() => editar(t.id, { color: c })}
-                style={[s.color, { backgroundColor: c }, t.color.toUpperCase() === c && { borderColor: tema.acento, borderWidth: 3 }]}
-              />
-            ))}
-          </Fila>
-        </View>
-      ))}
-    </ScrollView>
-  );
-}
-
-function PanelMas({ p, cambiar }: Panel) {
-  const sinVoz = p.clips.every((c) => !c.transcripcion?.length);
-  const copiar = async () => {
-    if (!p.publicacion) return;
-    const { titulo, descripcion, hashtags } = p.publicacion;
-    await Clipboard.setStringAsync([titulo, descripcion, hashtags.join(' ')].filter(Boolean).join('\n\n'));
-    Alert.alert('Copiado', 'Pégalo al publicar el video.');
-  };
-  const elegirMusica = async () => {
-    const r = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true });
-    if (r.canceled) return;
-    const a = r.assets[0];
-    const archivo = `musica-${nuevoId()}.${a.name.split('.').pop() ?? 'm4a'}`;
-    await copiarAlProyecto(p.id, a.uri, archivo);
-    cambiar((x) => ({ ...x, musica: { archivo, nombre: a.name, volumen: x.musica?.volumen ?? 0.35 } }));
-  };
-
-  return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-      <Etiqueta>Subtítulos automáticos</Etiqueta>
-      <Fila>
-        <Chip texto="Sí" activo={p.subtitulos} onPress={() => cambiar((x) => ({ ...x, subtitulos: true }))} />
-        <Chip texto="No" activo={!p.subtitulos} onPress={() => cambiar((x) => ({ ...x, subtitulos: false }))} />
-      </Fila>
-      {p.subtitulos && sinVoz && (
-        <Text style={s.nota}>{hayNativo ? 'Aún no hay voz transcrita: en la pestaña IA toca "Escuchar lo que se dice".' : AVISO_EXPO_GO}</Text>
-      )}
-
-      <Etiqueta>Sonido de los clips</Etiqueta>
-      <Fila>
-        {[
-          [0, 'Sin sonido'],
-          [0.5, 'Bajo'],
-          [1, 'Normal'],
-        ].map(([v, n]) => (
-          <Chip key={n} texto={n as string} activo={p.volumenOriginal === v} onPress={() => cambiar((x) => ({ ...x, volumenOriginal: v as number }))} />
-        ))}
-      </Fila>
-
-      <Etiqueta>Música</Etiqueta>
-      <Fila>
-        <Boton titulo={p.musica ? p.musica.nombre : 'Elegir canción'} tipo="secundario" onPress={elegirMusica} estilo={{ flex: 1 }} />
-        {p.musica && <Chip texto="Quitar" activo={false} onPress={() => cambiar((x) => ({ ...x, musica: null }))} />}
-      </Fila>
-      {p.musica && (
-        <Fila estilo={{ marginTop: 8 }}>
-          {[
-            [0.15, 'De fondo'],
-            [0.35, 'Media'],
-            [0.7, 'Alta'],
-          ].map(([v, n]) => (
-            <Chip
-              key={n}
-              texto={n as string}
-              activo={p.musica?.volumen === v}
-              onPress={() => cambiar((x) => (x.musica ? { ...x, musica: { ...x.musica, volumen: v as number } } : x))}
-            />
-          ))}
-        </Fila>
-      )}
-
-      <Etiqueta>Formato</Etiqueta>
-      <Fila>
-        {(Object.keys(FORMATOS) as Formato[]).map((f) => (
-          <Chip key={f} texto={`${FORMATOS[f].nombre} ${f}`} activo={p.formato === f} onPress={() => cambiar((x) => ({ ...x, formato: f }))} />
-        ))}
-      </Fila>
-
-      <Etiqueta>Para publicar</Etiqueta>
-      {p.publicacion ? (
-        <View style={s.tarjeta}>
-          <Text style={s.tarjetaTitulo}>{p.publicacion.titulo}</Text>
-          <Text style={[s.burbujaTexto, { marginTop: 6 }]}>{p.publicacion.descripcion}</Text>
-          <Text style={[s.nota, { color: '#64D2FF' }]}>{p.publicacion.hashtags.join(' ')}</Text>
-          <Boton titulo="Copiar todo" tipo="secundario" onPress={copiar} estilo={{ marginTop: 10 }} />
-        </View>
-      ) : (
-        <Text style={s.nota}>Pídele a la IA "Escribe el texto para publicar".</Text>
-      )}
-
-      <Etiqueta>Nombre</Etiqueta>
-      <TextInput
-        key={p.nombre}
-        defaultValue={p.nombre}
-        onEndEditing={(e) => e.nativeEvent.text.trim() && cambiar((x) => ({ ...x, nombre: e.nativeEvent.text.trim() }))}
-        style={s.input}
-      />
-    </ScrollView>
-  );
-}
-
 const s = StyleSheet.create({
-  accion: { color: tema.texto, fontSize: 16, marginLeft: 14 },
-  pestanas: { flexDirection: 'row', marginHorizontal: 16, marginTop: 12, backgroundColor: tema.tarjeta, borderRadius: 12, padding: 3 },
-  pestana: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
-  pestanaActiva: { backgroundColor: tema.borde },
-  pestanaTexto: { color: tema.suave, fontWeight: '700', fontSize: 14 },
-  nota: { color: tema.suave, fontSize: 13, lineHeight: 18, marginTop: 6 },
-  burbuja: { borderRadius: 14, padding: 12, maxWidth: '88%' },
-  burbujaYo: { backgroundColor: '#3A2A6B', alignSelf: 'flex-end' },
-  burbujaIA: { backgroundColor: tema.tarjeta, alignSelf: 'flex-start' },
-  burbujaTexto: { color: tema.texto, fontSize: 15, lineHeight: 21 },
-  entrada: { flexDirection: 'row', gap: 8, padding: 12, alignItems: 'flex-end' },
-  input: { backgroundColor: tema.tarjeta, color: tema.texto, borderRadius: 12, padding: 12, fontSize: 15, borderWidth: 1, borderColor: tema.borde, maxHeight: 110 },
-  tarjeta: { backgroundColor: tema.tarjeta, borderRadius: 14, padding: 12 },
-  tarjetaTitulo: { color: tema.texto, fontSize: 15, fontWeight: '700' },
-  mini: { color: tema.suave, fontSize: 13 },
-  color: { width: 30, height: 30, borderRadius: 15, borderWidth: 1, borderColor: tema.borde },
-  modalFondo: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  modal: { backgroundColor: tema.tarjeta, borderRadius: 18, padding: 22, width: '100%' },
-  modalTitulo: { color: tema.texto, fontSize: 20, fontWeight: '800' },
-  progresoBarra: { height: 8, backgroundColor: tema.borde, borderRadius: 4, marginTop: 16, overflow: 'hidden' },
-  progresoRelleno: { height: 8, backgroundColor: tema.acento },
+  hud: {
+    position: 'absolute',
+    top: 12,
+    alignSelf: 'center',
+    maxWidth: '86%',
+    backgroundColor: 'rgba(28,28,30,0.92)',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  transporte: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 6 },
+  reloj: { position: 'absolute', left: 16, top: 0, bottom: 0, justifyContent: 'center' },
+  derecha: { position: 'absolute', right: 12, top: 0, bottom: 0, justifyContent: 'center' },
+  pestanas: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4 },
+  modalFondo: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 32 },
+  modal: { backgroundColor: tema.tarjeta, borderRadius: 22, padding: 24, width: '100%', alignItems: 'center', gap: 10 },
+  progresoBarra: { height: 6, alignSelf: 'stretch', backgroundColor: tema.gris, borderRadius: 3, marginTop: 8, overflow: 'hidden' },
+  progresoRelleno: { height: 6, backgroundColor: tema.acento },
 });

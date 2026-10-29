@@ -1,15 +1,21 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 import { useAudioPlayer } from 'expo-audio';
 import { CapaTextos } from './CapaTextos';
+import { Icono } from './Icono';
 import { uriDe } from '@/lib/almacen';
-import { tema } from '@/lib/estilos';
-import { FORMATOS, duracionTotal, formatoTiempo, iniciosDeTramos, subtitulosDe, ubicar } from '@/lib/proyecto';
+import { FORMATOS, duracionTotal, iniciosDeTramos, subtitulosDe, ubicar } from '@/lib/proyecto';
 import type { Proyecto } from '@/lib/tipos';
 
 export interface VistaRef {
   pausar(): void;
+  alternar(): void;
+  /** Mueve el cursor sin reproducir. Se puede llamar muchas veces seguidas (al arrastrar la línea de tiempo). */
+  buscar(t: number): void;
+  tiempo(): number;
+  /** Avisa cada vez que cambia el tiempo. Devuelve la función para dejar de escuchar. */
+  suscribir(f: (t: number) => void): () => void;
 }
 
 /** Espera a que el reproductor pueda reproducir el archivo que se le acaba de cargar. */
@@ -34,10 +40,10 @@ function esperarListo(player: VideoPlayer): Promise<void> {
  * Vista previa: reproduce los tramos uno tras otro con un solo reproductor
  * y dibuja encima los textos y subtítulos con las mismas medidas del exportador.
  */
-export const Vista = forwardRef<VistaRef, { proyecto: Proyecto; ancho: number; altoMaximo: number }>(function Vista(
-  { proyecto, ancho: anchoDisponible, altoMaximo },
-  ref,
-) {
+export const Vista = forwardRef<
+  VistaRef,
+  { proyecto: Proyecto; ancho: number; altoMaximo: number; zonaSegura?: boolean; onReproduciendo?: (si: boolean) => void }
+>(function Vista({ proyecto, ancho: anchoDisponible, altoMaximo, zonaSegura, onReproduciendo }, ref) {
   const fmt = FORMATOS[proyecto.formato];
   const escala = Math.min(anchoDisponible / fmt.ancho, altoMaximo / fmt.alto);
   const ancho = fmt.ancho * escala;
@@ -60,8 +66,23 @@ export const Vista = forwardRef<VistaRef, { proyecto: Proyecto; ancho: number; a
   });
   const musica = useAudioPlayer(proyecto.musica ? { uri: uriDe(id, proyecto.musica.archivo) } : null);
 
-  const [t, setT] = useState(0);
-  const [tocando, setTocando] = useState(false);
+  const [t, setTEstado] = useState(0);
+  const tActual = useRef(0);
+  const oyentes = useRef(new Set<(t: number) => void>());
+  const setT = useCallback((v: number) => {
+    tActual.current = v;
+    setTEstado(v);
+    oyentes.current.forEach((f) => f(v));
+  }, []);
+
+  const [tocando, setTocandoEstado] = useState(false);
+  const setTocando = useCallback(
+    (v: boolean) => {
+      setTocandoEstado(v);
+      onReproduciendo?.(v);
+    },
+    [onReproduciendo],
+  );
   const cargada = useRef<string | null>(null);
   const indice = useRef(0);
   const ocupado = useRef(false);
@@ -105,7 +126,7 @@ export const Vista = forwardRef<VistaRef, { proyecto: Proyecto; ancho: number; a
         if (vigente()) ocupado.current = false;
       }
     },
-    [tramos, uriDeTramo, player, musica, proyecto.musica],
+    [tramos, uriDeTramo, player, musica, proyecto.musica, setT],
   );
 
   const pausar = useCallback(() => {
@@ -114,14 +135,60 @@ export const Vista = forwardRef<VistaRef, { proyecto: Proyecto; ancho: number; a
     player.pause();
     musica.pause();
     setTocando(false);
-  }, [player, musica]);
+  }, [player, musica, setTocando]);
 
-  useImperativeHandle(ref, () => ({ pausar }), [pausar]);
+  // Al arrastrar llegan muchas búsquedas: se hace una a la vez y siempre la última.
+  const pendiente = useRef<number | null>(null);
+  const buscando = useRef(false);
+  const buscar = useCallback(
+    (v: number) => {
+      if (!Number.isFinite(v)) return;
+      const x = Math.min(Math.max(0, v), Math.max(0, total - 0.01));
+      if (tocando) pausar();
+      setT(x);
+      pendiente.current = x;
+      if (buscando.current) return;
+      buscando.current = true;
+      void (async () => {
+        try {
+          while (pendiente.current !== null) {
+            const siguiente = pendiente.current;
+            pendiente.current = null;
+            await irA(siguiente, false);
+          }
+        } finally {
+          buscando.current = false;
+        }
+      })();
+    },
+    [total, tocando, pausar, setT, irA],
+  );
+
+  const alternar = useCallback(() => {
+    if (tocando) return pausar();
+    setTocando(true);
+    irA(tActual.current >= total - 0.05 ? 0 : tActual.current, true);
+  }, [tocando, pausar, setTocando, irA, total]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      pausar,
+      alternar,
+      buscar,
+      tiempo: () => tActual.current,
+      suscribir: (f) => {
+        oyentes.current.add(f);
+        return () => oyentes.current.delete(f);
+      },
+    }),
+    [pausar, alternar, buscar],
+  );
 
   // Si el montaje cambia, se vuelve a cargar donde iba (o al final si se acortó).
   useEffect(() => {
     pausar();
-    irA(Math.min(t, Math.max(0, total - 0.05)), false);
+    irA(Math.min(tActual.current, Math.max(0, total - 0.05)), false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tramos]);
 
@@ -155,72 +222,57 @@ export const Vista = forwardRef<VistaRef, { proyecto: Proyecto; ancho: number; a
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [tocando, tramos, inicios, player, total, irA, pausar]);
-
-  const alternar = () => {
-    if (tocando) return pausar();
-    setTocando(true);
-    irA(t >= total - 0.05 ? 0 : t, true);
-  };
-
-  // Barra de tiempo: tocar o arrastrar para moverse.
-  const [anchoBarra, setAnchoBarra] = useState(1);
-  const tiempoDeX = (x: number) => Math.min(total, Math.max(0, (x / anchoBarra) * total));
+  }, [tocando, tramos, inicios, player, total, irA, pausar, setT]);
 
   return (
-    <View style={{ alignItems: 'center' }}>
-      <Pressable onPress={alternar} style={{ width: ancho, height: alto, backgroundColor: '#000', borderRadius: 12, overflow: 'hidden' }}>
-        <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="cover" nativeControls={false} />
-        <CapaTextos textos={proyecto.textos} subtitulos={subtitulos} t={t} ancho={ancho} alto={alto} />
-        {!tocando && (
-          <View style={s.play} pointerEvents="none">
-            <Text style={s.playTexto}>▶</Text>
+    <Pressable
+      onPress={alternar}
+      accessibilityRole="button"
+      accessibilityLabel={tocando ? 'Pausar' : 'Reproducir'}
+      style={{ width: ancho, height: alto, backgroundColor: '#000', borderRadius: 14, overflow: 'hidden', alignSelf: 'center' }}
+    >
+      <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="cover" nativeControls={false} />
+      <CapaTextos textos={proyecto.textos} subtitulos={subtitulos} t={t} ancho={ancho} alto={alto} />
+      {zonaSegura && <ZonaSegura vertical={proyecto.formato === '9:16'} />}
+      {!tocando && (
+        <View style={s.play} pointerEvents="none">
+          <View style={s.playCirculo}>
+            <Icono nombre="play" tamano={26} color="#FFFFFF" />
           </View>
-        )}
-      </Pressable>
-
-      <View style={[s.controles, { width: anchoDisponible }]}>
-        <Text style={s.tiempo}>
-          {formatoTiempo(t)} / {formatoTiempo(total)}
-        </Text>
-        <View
-          style={s.barra}
-          onLayout={(e) => setAnchoBarra(e.nativeEvent.layout.width)}
-          onStartShouldSetResponder={() => true}
-          onMoveShouldSetResponder={() => true}
-          onResponderGrant={(e) => {
-            pausar();
-            setT(tiempoDeX(e.nativeEvent.locationX));
-          }}
-          onResponderMove={(e) => setT(tiempoDeX(e.nativeEvent.locationX))}
-          onResponderRelease={(e) => irA(tiempoDeX(e.nativeEvent.locationX), false)}
-        >
-          {tramos.map((tr, i) => (
-            <View
-              key={tr.id}
-              style={{
-                position: 'absolute',
-                left: (inicios[i] / (total || 1)) * anchoBarra,
-                width: Math.max(2, ((tr.fin - tr.inicio) / (total || 1)) * anchoBarra - 2),
-                top: 10,
-                bottom: 10,
-                borderRadius: 3,
-                backgroundColor: i % 2 ? '#3A3A40' : '#4A4A52',
-              }}
-            />
-          ))}
-          <View style={[s.cabezal, { left: (t / (total || 1)) * anchoBarra - 1 }]} />
         </View>
-      </View>
-    </View>
+      )}
+    </Pressable>
   );
 });
 
+/**
+ * Zona segura: fuera del recuadro, los botones de Reels y TikTok tapan el video (aproximado).
+ * Mismas medidas que la app de computador.
+ */
+function ZonaSegura({ vertical }: { vertical: boolean }) {
+  const m = vertical ? { top: '12%', right: '16%', bottom: '22%', left: '6%' } : { top: '5%', right: '5%', bottom: '5%', left: '5%' };
+  const sombra = 'rgba(0,0,0,0.38)';
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      <View style={{ position: 'absolute', left: 0, right: 0, top: 0, height: m.top, backgroundColor: sombra }} />
+      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: m.bottom, backgroundColor: sombra }} />
+      <View style={{ position: 'absolute', left: 0, top: m.top, bottom: m.bottom, width: m.left, backgroundColor: sombra }} />
+      <View style={{ position: 'absolute', right: 0, top: m.top, bottom: m.bottom, width: m.right, backgroundColor: sombra }} />
+      <View style={[{ position: 'absolute', ...m }, s.zona]} />
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
   play: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
-  playTexto: { color: 'rgba(255,255,255,0.85)', fontSize: 48 },
-  controles: { marginTop: 10, gap: 6 },
-  tiempo: { color: tema.suave, fontSize: 13, fontVariant: ['tabular-nums'], textAlign: 'center' },
-  barra: { height: 36, backgroundColor: tema.tarjeta, borderRadius: 8, overflow: 'hidden' },
-  cabezal: { position: 'absolute', top: 0, bottom: 0, width: 2, backgroundColor: tema.acento },
+  playCirculo: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingLeft: 4,
+  },
+  zona: { borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(255,214,10,0.85)' },
 });

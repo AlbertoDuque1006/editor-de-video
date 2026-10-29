@@ -39,12 +39,3 @@ export function animacionEn(
 
 export const COLORES = ['#FFFFFF', '#FFD60A', '#FF375F', '#30D158', '#0A84FF', '#BF5AF2', '#000000'];
 
-export const tema = {
-  fondo: '#0E0E10',
-  tarjeta: '#1C1C1F',
-  borde: '#2C2C30',
-  texto: '#F5F5F7',
-  suave: '#9A9AA0',
-  acento: '#FF375F',
-  ok: '#30D158',
-};
