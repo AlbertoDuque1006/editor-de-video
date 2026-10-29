@@ -70,9 +70,13 @@ Hecho:
 - La app completa en TypeScript. Typecheck, 14 pruebas, empaquetado de Metro y `expo-doctor` (20/20), todo en verde.
 - El exportador de Swift probado en el Mac: textos, subtítulos, cover y rotación verificados en fotogramas.
 - Primera compilación en EAS (perfil `prueba`, build 2, 2026-10-28), instalada en el iPhone del usuario.
-- Rediseño estilo iPhone (2026-10-29): ícono y pantalla de inicio propios (`assets/`, salen de `../app-test-pc/build/icon.svg`), línea de tiempo, rehacer, zona segura, portadas en la lista, menú al mantener presionado un video (cambiar nombre, duplicar, borrar). Revisado en Chrome a 390 pt con datos de muestra; falta verlo en el iPhone.
+- Rediseño estilo iPhone (2026-10-29, commit `cc20f9b`): ícono y pantalla de inicio propios (`assets/`, salen de `../app-test-pc/build/icon.svg`), línea de tiempo, rehacer, zona segura, portadas en la lista, menú al mantener presionado un video (cambiar nombre, duplicar, borrar). Revisado en Chrome a 390 pt con datos de muestra.
+- Build 3 en EAS (perfil `prueba`, 2026-10-29) con el rediseño: (enlace en la cuenta de expo.dev). Las credenciales están guardadas en EAS (certificado y perfil vencen el 2027-10-28). Cada build nueva trae módulos nativos, así que no sirve una actualización por aire (no hay EAS Update).
 
 Pendiente:
-- Compilar de nuevo (`npm run build:prueba`) para tener el rediseño en el iPhone: trae módulos nativos nuevos (expo-symbols, expo-haptics, @expo/ui, expo-splash-screen, expo-font), así que no sirve una actualización por aire.
-- Probar en el iPhone: la barra nativa, el menú de los videos, la línea de tiempo con el dedo, la transcripción real y la llamada a Claude con una clave.
+- Que el usuario instale la build 3 y pruebe en el iPhone: la barra nativa, el menú de los videos, la línea de tiempo con el dedo, la transcripción real y la llamada a Claude con una clave. Corregir lo que reporte.
+- Decidir con el usuario si la app es de uso interno o para venderla:
+  - Interno (recomendado): TestFlight con `eas build --profile testflight` y `eas-cli submit`; hasta 100 personas del equipo sin revisión de Apple y sin registrar cada iPhone.
+  - App Store pública: ficha (capturas, descripción, política de privacidad en una URL), declarar que se envían fotos y transcripción a Anthropic y pedir permiso en la app antes de mandarlos a la IA (regla 5.1.2 de Apple), y sobre todo un servidor propio con la clave de Claude en vez de que cada usuario ponga la suya; si se cobra, compras dentro de la app (Apple se queda con el 15 %). Para que salga a nombre de la empresa hace falta cuenta de empresa con número D-U-N-S.
+- Pedir permiso al usuario antes de lanzar cualquier build en EAS (usa su cuenta).
 - Para revisar el diseño en el Mac sin iPhone se puede abrir en Chrome con `react-native-web` y datos de muestra, pero el SDK de Anthropic no carga en la web de desarrollo (importación circular; en iOS sí carga) y hay que cambiar `ia.ts` por uno falso solo para esa vista.
