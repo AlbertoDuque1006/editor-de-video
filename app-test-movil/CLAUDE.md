@@ -71,7 +71,7 @@ Hecho:
 - El exportador de Swift probado en el Mac: textos, subtítulos, cover y rotación verificados en fotogramas.
 - Primera compilación en EAS (perfil `prueba`, build 2, 2026-10-28), instalada en el iPhone del usuario.
 - Rediseño estilo iPhone (2026-10-29, commit `cc20f9b`): ícono y pantalla de inicio propios (`assets/`, salen de `../app-test-pc/build/icon.svg`), línea de tiempo, rehacer, zona segura, portadas en la lista, menú al mantener presionado un video (cambiar nombre, duplicar, borrar). Revisado en Chrome a 390 pt con datos de muestra.
-- Build 3 en EAS (perfil `prueba`, 2026-10-29) con el rediseño: (enlace en la cuenta de expo.dev). Las credenciales están guardadas en EAS (certificado y perfil vencen el 2027-10-28). Cada build nueva trae módulos nativos, así que no sirve una actualización por aire (no hay EAS Update).
+- Build 3 en EAS (perfil `prueba`, 2026-10-29) con el rediseño (el enlace está en la cuenta de expo.dev). Las credenciales están guardadas en EAS (certificado y perfil vencen el 2027-10-28). Cada build nueva trae módulos nativos, así que no sirve una actualización por aire (no hay EAS Update).
 
 Pendiente:
 - Que el usuario instale la build 3 y pruebe en el iPhone: la barra nativa, el menú de los videos, la línea de tiempo con el dedo, la transcripción real y la llamada a Claude con una clave. Corregir lo que reporte.
