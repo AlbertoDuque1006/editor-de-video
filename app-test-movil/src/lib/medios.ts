@@ -2,27 +2,45 @@ import { createVideoPlayer, type VideoThumbnail } from 'expo-video';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { copiarAlProyecto, PORTADA } from './almacen';
 
-/** Duración y tamaño de un video cuando el selector no los trae. */
-export function medirVideo(uri: string): Promise<{ duracion: number; ancho: number; alto: number }> {
+/** Espera los metadatos antes de pedir fotogramas al reproductor. */
+function abrirVideo(uri: string): Promise<{ player: ReturnType<typeof createVideoPlayer>; duracion: number; ancho: number; alto: number }> {
   return new Promise((resolve, reject) => {
     const player = createVideoPlayer(uri);
-    const fin = (r: () => void) => {
+    const limpiar = () => {
       clearTimeout(espera);
-      sub.remove();
-      player.release();
-      r();
+      subCarga.remove();
+      subEstado.remove();
     };
-    const espera = setTimeout(() => fin(() => reject(new Error('No se pudo leer el video'))), 10000);
-    const sub = player.addListener('sourceLoad', ({ duration, availableVideoTracks }) => {
+    const fallar = () => {
+      limpiar();
+      player.release();
+      reject(new Error('No se pudo leer el video'));
+    };
+    const subCarga = player.addListener('sourceLoad', ({ duration, availableVideoTracks }) => {
+      limpiar();
       const size = availableVideoTracks[0]?.size;
-      fin(() => resolve({ duracion: duration, ancho: size?.width ?? 0, alto: size?.height ?? 0 }));
+      resolve({ player, duracion: duration, ancho: size?.width ?? 0, alto: size?.height ?? 0 });
     });
+    const subEstado = player.addListener('statusChange', ({ status }) => {
+      if (status === 'error') fallar();
+    });
+    const espera = setTimeout(fallar, 10000);
   });
+}
+
+/** Duración y tamaño de un video cuando el selector no los trae. */
+export async function medirVideo(uri: string): Promise<{ duracion: number; ancho: number; alto: number }> {
+  const { player, duracion, ancho, alto } = await abrirVideo(uri);
+  try {
+    return { duracion, ancho, alto };
+  } finally {
+    player.release();
+  }
 }
 
 /** Fotos JPEG pequeñas (base64) de un clip, para que Claude vea de qué trata. */
 export async function miniaturas(uri: string, duracion: number, cuantas: number): Promise<string[]> {
-  const player = createVideoPlayer(uri);
+  const { player } = await abrirVideo(uri);
   try {
     const tiempos = Array.from({ length: cuantas }, (_, i) => (duracion * (i + 0.5)) / cuantas);
     const fotos = await player.generateThumbnailsAsync(tiempos, { maxWidth: 512, maxHeight: 512 });
@@ -40,7 +58,7 @@ export async function miniaturas(uri: string, duracion: number, cuantas: number)
 
 /** Fotogramas pequeños de un clip en los segundos pedidos, para la línea de tiempo (se muestran con expo-image). */
 export async function fotogramas(uri: string, tiempos: number[], altoMaximo: number): Promise<VideoThumbnail[]> {
-  const player = createVideoPlayer(uri);
+  const { player } = await abrirVideo(uri);
   try {
     return await player.generateThumbnailsAsync(tiempos, { maxHeight: altoMaximo, maxWidth: altoMaximo * 2 });
   } finally {
@@ -50,7 +68,7 @@ export async function fotogramas(uri: string, tiempos: number[], altoMaximo: num
 
 /** Guarda en la carpeta del proyecto la foto de portada que se ve en la lista de videos. */
 export async function guardarPortada(proyectoId: string, uriClip: string, segundo: number): Promise<void> {
-  const player = createVideoPlayer(uriClip);
+  const { player } = await abrirVideo(uriClip);
   try {
     const [foto] = await player.generateThumbnailsAsync([segundo], { maxWidth: 480, maxHeight: 480 });
     if (!foto) return;
