@@ -3,7 +3,7 @@
 Editor de video con IA hecho para el equipo de una agencia de marketing. No va a tiendas: el instalador se reparte y en el iPhone se usa EAS o TestFlight.
 - Repositorio PÚBLICO desde 2026-11-17: https://github.com/AlbertoDuque1006/editor-de-video (rama `master`, licencia MIT). `README.md` es la cara pública: si cambias funciones, actualízalo, y también las capturas de `docs/capturas/`.
 - Commits solo con la cuenta AlbertoDuque1006. El repo ya tiene `user.name` y `user.email` locales; nunca uses otra identidad.
-- Como es público, no subas claves, nombres de clientes, enlaces a builds de EAS ni datos de cuentas. Antes de hacer push: `gitleaks git . --redact`.
+- Como es público, no subas claves, nombres de empresas, clientes o personas, enlaces a builds de EAS ni datos de cuentas. Antes de hacer push: `gitleaks git . --redact`.
 
 ## Carpetas
 
